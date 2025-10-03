@@ -14,7 +14,8 @@ class CitationDataset(Dataset):
                  db_url="mysql+pymysql://root:root@localhost:3306/ULAKBIM-CABIM-UBYT-bs",
                  max_len=128,
                  mode="labeled",
-                 task = None):
+                 task = None,
+                 include_section_in_input=False):
         """
         tokenizer: Dışarıdan verilen, önceden yüklenmiş bir tokenizer nesnesi.
         csv_path: Veri setinin yolu.
@@ -27,6 +28,7 @@ class CitationDataset(Dataset):
         self.max_len = max_len
         self.mode = mode
         self.task = task
+        self.include_section_in_input = include_section_in_input
 
         if os.path.exists(csv_path):
             print(f"CSV bulundu, {csv_path} dosyasından yükleniyor...")
@@ -97,17 +99,34 @@ class CitationDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        text = str(row['citation_context'])
         label_id = row['label_id']
-        section_id = row['section_id'] # YENİ: section_id alındı
+        section_id = row['section_id']
 
-        encoding = self.tokenizer(
-            text,
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_len,
-            return_tensors="pt"
-        )
+        # Eğer parametre True ise, bölüm başlığını ve metin içeriğini ayrı ayrı alıp tokenizer'a çift girdi olarak verilir
+        # [CLS] section_title [SEP] citation_context [SEP]
+        if self.include_section_in_input:
+            section_title = str(row['section'])
+            text_context = str(row['citation_context'])
+            encoding = self.tokenizer(
+                text=section_title,
+                text_pair=text_context,
+                padding="max_length",
+                truncation=True,
+                max_length=self.max_len,
+                return_tensors="pt"
+            )
+
+        # Eğer parametre False ise sadece metin içeriğini tokenizer'a girdi olarak verilir
+        # [CLS] citation_context [SEP]
+        else:
+            text_context = str(row['citation_context'])
+            encoding = self.tokenizer(
+                text = text_context,
+                padding="max_length",
+                truncation=True,
+                max_length=self.max_len,
+                return_tensors="pt"
+            )
 
         return {
             "input_ids": encoding["input_ids"].squeeze(0),

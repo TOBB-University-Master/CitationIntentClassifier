@@ -71,10 +71,10 @@ def main():
         "batch_size": 16,
         "epochs": 1,
         "lr": 2e-5,
-        #"model_name": "dbmdz/bert-base-turkish-cased",
+        "model_name": "dbmdz/bert-base-turkish-cased",
         #"model_name": "dbmdz/electra-base-turkish-cased-discriminator",
         #"model_name": "xlm-roberta-base",
-        "model_name": "microsoft/deberta-v3-base",
+        #"model_name": "microsoft/deberta-v3-base",
         "seed": 42
     }
 
