@@ -1,6 +1,14 @@
-# BERTurk Citation Intent Classifier
+# Citation Intent Classifier
 
-Bu proje, Türkçe akademik metinlerdeki atıf cümlelerini analiz ederek atıf niyetini (citation intent) belirlemeye yöneliktir. Model, çeşitli embedding stratejileriyle desteklenen BERTurk tabanlı bir sinir ağı kullanır.
+Bu proje, Türkçe akademik metinlerdeki atıf cümlelerini analiz ederek atıf niyetini (citation intent) belirlemeye 
+yöneliktir. 
+
+Kullanılan modeller aşağıdaki gibi listelenmektedir.
+* dbmdz/bert-base-turkish-cased
+* dbmdz/electra-base-turkish-cased-discriminator
+* xlm-roberta-base
+* microsoft/deberta-v3-base
+
 
 ## 🎓 Amaç
 
@@ -18,25 +26,33 @@ Türkçe atıf cümlelerinin şu 6 sınıftan birine ait olup olmadığını sı
 Python 3.9+ ve PyTorch ile uyumlu bir conda ortamında:
 
 ```bash
-pip install torch transformers pandas scikit-learn sqlalchemy tqdm
+  conda create --name <ortam_adi> python=3.9
+  conda activate <ortam_adi>
+  pip install -r requirements.txt
 ```
 
 ## 📂 Klasör Yapısı
 
 ```
-berturk_v1/
+base_directory/
+├── train_v1.py                    # Standart sınıflandırma için eğitim (model değişken olarak verilebilir)
+├── train_v2.py                    # Hiyerarşik sınıflandırma için eğitim (model değişken olarak verilebilir)
+├── checkpoints/                   # Kaydedilen model ve optimizer durumları
+├── predict_v1.py                  # Standart sınıflandırma için tahmin (model değişken olarak verilebilir)
+├── predict_v1.py                  # Hiyerarşik sınıflandırma için tahmin (model değişken olarak verilebilir)
+├── generic_model.py               # Generic TransformerClassifier sınıfıdır. Parametre olarak model ismi alır ve sonunda sınıflandırıcısı vardır
 ├── dataset.py                     # SQL veya CSV tabanlı veri çekme
-├── model.py                       # BERTurkClassifier modeli
-├── train.py                       # Eğitme döngüsü, checkpoint desteği ile
+├── model.py                       # [DEPRECIATE] BERTurkClassifier modeli
+├── train.py                       # [DEPRECIATE] Eğitme döngüsü, checkpoint desteği ile
 ├── extract_embeddings.py          # CLS, mean, max, attention-weighted embedding çıkışı
 ├── analyze_clusters.py            # Elbow, silhouette ve t-SNE analizleri
 ├── cls_to_closest_tokens.py       # CLS embedding ile en yakın tokenları bulma
 ├── embedding_to_closest_tokens.py # Tüm embedding'ler için yakın token analizi
 ├── predict_untrained.py           # Eğitim öncesi embedding'leri gözlemleme
-├── checkpoints/                   # Kaydedilen model ve optimizer durumları
 ├── output/                        # .npy dosyaları ve analiz grafikleri
 ├── data/
 │   └── train.csv                  # SQL'den çekilen veya dışa aktarılan veri
+│   └── data_v1.csv                # SQL'den çekilen veya dışa aktarılan temizlenmiş veri
 ```
 
 ## 📃 Veri Kaynağı
@@ -50,8 +66,15 @@ Veriler MySQL veritabanından şu sorgularla alınır:
 
 ## 📅 Eğitim Aşamaları
 
+***train_v1.py:*** Bir metnin atıf niyetini tüm sınıflar arasında doğrudan tek bir adımda sınıflandıran standart bir 
+Transformer modelini eğitir.
+
+***train_v2.py:*** Atıf niyetini iki aşamalı hiyerarşik bir yaklaşımla sınıflandıran iki ayrı model eğitir; ilk model 
+metnin "background" olup olmadığını anlarken, ikinci model "non-background" metinleri kendi alt türlerine ayırır.
+
 ```bash
-python train.py
+  python train_v1.py
+  python train_v2.py
 ```
 
 Model `checkpoints/berturk_classifier_checkpoint.pt` dosyasına kaydedilir ve tekrar çalıştırıldığında kaldığı yerden devam eder.
