@@ -5,7 +5,6 @@ from torch import Generator
 from torch.utils.data import DataLoader, random_split
 from transformers import get_scheduler, AutoTokenizer
 from torch.optim import AdamW
-
 from dataset import CitationDataset
 from generic_model import TransformerClassifier
 from tqdm import tqdm
@@ -13,6 +12,19 @@ import os
 import logging
 import json
 import pickle  # LabelEncoder ve SectionEncoder'ı kaydetmek için
+import optuna   # Optuna kütüphanesi hiperparametre optimizasyonu için
+
+# ==============================================================================
+#                      *** DENEY YAPILANDIRMASI ***
+# ==============================================================================
+MODEL_NAME = "dbmdz/bert-base-turkish-cased"
+# MODEL_NAME = "dbmdz/electra-base-turkish-cased-discriminator"
+# MODEL_NAME = "xlm-roberta-base"
+# MODEL_NAME = "microsoft/deberta-v3-base"
+
+DATA_PATH = "data/data_v2.csv"
+# ==============================================================================
+
 
 """
      Eğitim sürecindeki önemli bilgileri (epoch başlangıcı, kayıp değeri, doğruluk vb.) hem bir dosyaya (training.log) 
@@ -66,21 +78,20 @@ def evaluate(model, data_loader, device, label_names):
         Args:
             section_embed_dim (int): Tahmin edilecek section için embedding uzunluğu eklenmiştir
     """
-def main():
+def objective(trial):
     config = {
-        "batch_size": 16,
-        "epochs": 1,
-        "lr": 2e-5,
-        "model_name": "dbmdz/bert-base-turkish-cased",
-        #"model_name": "dbmdz/electra-base-turkish-cased-discriminator",
-        #"model_name": "xlm-roberta-base",
-        #"model_name": "microsoft/deberta-v3-base",
+        "data_path": DATA_PATH,
+        "model_name": MODEL_NAME,
+        "batch_size": trial.suggest_categorical("batch_size", [16, 32]),
+        "epochs": trial.suggest_int("epochs", 5,30),
+        "lr": trial.suggest_float("lr", 1e-5, 5e-5, log=True),
+        "weight_decay": trial.suggest_float("weight_decay", 0.0, 0.1),
         "seed": 42
     }
 
     # Model adına göre dinamik çıktı klasörü oluştur
     model_short_name = config["model_name"].split('/')[-1]
-    output_dir = f"checkpoints_v1/{model_short_name}/"
+    output_dir = f"checkpoints_v1/{model_short_name}/trial_{trial.number}/"
     os.makedirs(output_dir, exist_ok=True)
 
     # Dinamik dosya yolları
@@ -91,15 +102,17 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(config["seed"])
+    logging.info(f"--- Deneme #{trial.number} Başlatılıyor ---")
+    logging.info(f"Parametreler: {json.dumps(trial.params, indent=4)}")
     logging.info(f"Cihaz seçildi: {device}")
     logging.info(f"Kullanılan Model: {config['model_name']}")
 
     # Tokenizer
-    logging.info(f"Tokenizer yükleniyor: {config['model_name']}")
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
 
+    # Veriyi yükle ve hazırla
     logging.info("Ana veri seti yükleniyor: data/data_v1.csv")
-    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path="data/data_v1.csv")
+    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=config['data_path'])
     logging.info(f"Toplam kayıt sayısı: {len(full_dataset)}")
 
     num_labels = len(full_dataset.get_label_names())
@@ -109,7 +122,7 @@ def main():
     # Tekrarlanabilirliği sağlamak için jeneratörü ayarla
     generator = Generator().manual_seed(config["seed"])
 
-    # 2. ADIM: VERİYİ %80 (TRAIN+VAL) VE %20 (TEST) OLARAK AYIRMA
+    # VERİYİ %80 (TRAIN+VAL) VE %20 (TEST) OLARAK AYIRMA
     logging.info("Veri seti, %80 Eğitim/Doğrulama ve %20 Test olarak ayrılıyor...")
     train_val_size = int(0.8 * len(full_dataset))
     test_size = len(full_dataset) - train_val_size
@@ -154,7 +167,7 @@ def main():
 
     model.to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=config["lr"])
+    optimizer = AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
     num_training_steps = len(train_loader) * config["epochs"]
     lr_scheduler = get_scheduler("linear",
                                  optimizer=optimizer,
@@ -183,7 +196,7 @@ def main():
         model.train()
         total_loss = 0
 
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{config['epochs']}", leave=False)
+        progress_bar = tqdm(train_loader, desc=f"Trial {trial.number} Epoch {epoch + 1}/{config['epochs']}", leave=False)
         for batch in progress_bar:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
@@ -236,6 +249,11 @@ def main():
     with open(os.path.join(output_dir, "training_config.json"), 'w') as f:
         json.dump(config, f, indent=4)
 
+
+    logging.info(f"--- Deneme #{trial.number} Tamamlandı. En İyi Doğrulama Başarımı: {best_val_acc:.4f} ---")
+
+    return best_val_acc
+
 '''
     ### DEĞİŞİKLİK 5: Eğitim sonunda otomatik test adımı eklendi ###
     logging.info("\n--- NİHAİ TEST SÜRECİ BAŞLATILIYOR ---")
@@ -255,4 +273,33 @@ def main():
 '''
 
 if __name__ == "__main__":
-    main()
+
+    model_short_name = MODEL_NAME.split('/')[-1]
+    study_name = f"{model_short_name}_study"
+    storage_path = f"sqlite:///{model_short_name}.db"
+
+    print(f"🚀 Optimizasyon Başlatılıyor 🚀")
+    print(f"Model: {MODEL_NAME}")
+    print(f"Çalışma Adı (Study Name): {study_name}")
+    print(f"Veritabanı Dosyası: {storage_path}")
+    print("-------------------------------------------------")
+
+    study = optuna.create_study(
+        study_name=study_name,
+        storage=storage_path,
+        load_if_exists=True,
+        direction="maximize"
+    )
+
+    # n_trials: Toplamda kaç farklı parametre kombinasyonu deneneceğini belirtir
+    study.optimize(objective, n_trials=20)
+
+    print("Optimizasyon tamamlandı.")
+    print("En iyi deneme:")
+    trial = study.best_trial
+
+    print(f"  Değer (En Yüksek Validation Accuracy): {trial.value}")
+    print("  En İyi Parametreler: ")
+    for key, value in trial.params.items():
+        print(f"    {key}: {value}")
+
