@@ -28,8 +28,7 @@ DATA_PATH = "data/data_v2.csv"
 
 DATASET_INFO = True
 
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:2048'
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:2048,expandable_segments:True'
 # ==============================================================================
 
 
