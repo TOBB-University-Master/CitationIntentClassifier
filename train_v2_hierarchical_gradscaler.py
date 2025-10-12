@@ -15,7 +15,7 @@ from collections import Counter
 from dataset import CitationDataset
 from generic_model import TransformerClassifier
 from tqdm import tqdm
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
@@ -552,7 +552,7 @@ def run_training_stage(config, trial, task_type):
 
             # AMP >> autocast ile ileri yayılım (forward pass) ve kayıp hesaplaması
             # Bu blok içindeki işlemler otomatik olarak FP16 formatında yapılır
-            with autocast(enabled=(device.type == 'cuda')):
+            with autocast(device_type=device.type, dtype=torch.float16):
                 logits = model(input_ids, attention_mask)
                 loss = criterion(logits, labels)
 
