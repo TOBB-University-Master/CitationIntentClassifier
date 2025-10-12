@@ -74,14 +74,14 @@ class CitationDataset(Dataset):
                 # 'Background' olmayan tüm etiketleri 'Non-Background' olarak değiştiriyoruz.
                 # NOT: Gerçek sınıf adınız 'Background' değilse burayı güncellemeniz gerekir.
                 binary_labels = self.df['citation_intent'].apply(
-                    lambda x: 'background' if x == 'background' else 'non-background')
+                    lambda x: 'background' if str(x).lower() == 'background' else 'non-background')
                 self.df['label_id'] = self.label_encoder.fit_transform(binary_labels)
 
             # Görev 2: Çok Sınıflı Uzman Sınıflandırma (Sadece Non-Background verileri)
             elif self.task == 'multiclass':
                 print("Çok sınıflı görev modu: Sadece 'Non-Background' verileri kullanılıyor.")
                 # DataFrame'i sadece 'Background' olmayan verilerle filtreliyoruz.
-                self.df = self.df[self.df['citation_intent'] != 'Background'].reset_index(drop=True)
+                self.df = self.df[self.df['citation_intent'] != 'background'].reset_index(drop=True)
                 self.df['label_id'] = self.label_encoder.fit_transform(self.df['citation_intent'])
 
             # Varsayılan Durum: Tüm sınıflar kullanılır (train_v1'deki gibi)

@@ -17,10 +17,10 @@ import optuna   # Optuna kütüphanesi hiperparametre optimizasyonu için
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
 # ==============================================================================
-MODEL_NAME = "dbmdz/bert-base-turkish-cased"
+# MODEL_NAME = "dbmdz/bert-base-turkish-cased"
 # MODEL_NAME = "dbmdz/electra-base-turkish-cased-discriminator"
-# MODEL_NAME = "xlm-roberta-base"
-# MODEL_NAME = "microsoft/deberta-v3-base"
+ #MODEL_NAME = "xlm-roberta-base"
+MODEL_NAME = "microsoft/deberta-v3-base"
 
 DATA_PATH = "data/data_v2.csv"
 # ==============================================================================
@@ -100,7 +100,14 @@ def objective(trial):
 
     setup_logging(log_file=os.path.join(output_dir, "training.log"))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
     torch.manual_seed(config["seed"])
     logging.info(f"--- Deneme #{trial.number} Başlatılıyor ---")
     logging.info(f"Parametreler: {json.dumps(trial.params, indent=4)}")
