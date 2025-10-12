@@ -27,6 +27,8 @@ MODEL_NAME = "dbmdz/bert-base-turkish-cased"
 DATA_PATH = "data/data_v2.csv"
 
 DATASET_INFO = True
+
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 # ==============================================================================
 
 
