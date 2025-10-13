@@ -26,9 +26,7 @@ MODEL_NAME = "dbmdz/bert-base-turkish-cased"
 
 DATA_PATH = "data/data_v2.csv"
 
-DATASET_INFO = True
-
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:2048,expandable_segments:True'
+DATASET_INFO = False
 # ==============================================================================
 
 
@@ -492,11 +490,14 @@ def run_training_stage(config, trial, task_type):
     lr = config["lr_binary"] if is_binary else config["lr_multiclass"]
     epochs = config["epochs_binary"] if is_binary else config["epochs_multiclass"]
 
+    # ### YENİ EKLENEN SATIR ### - Doğru encoder yolunu seç
+    encoder_path = config["label_encoder_binary_path"] if is_binary else config["label_encoder_multiclass_path"]
+
     log_file = os.path.join(output_dir, f"training_{task_type}.log")
     setup_logging(log_file)
     logging.info(f"--- Deneme #{trial.number} - {task_type} Sınıflandırıcı Eğitimi Başlatılıyor ---")
 
-    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
@@ -513,6 +514,10 @@ def run_training_stage(config, trial, task_type):
     full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=config['data_path'], task=task_type)
     num_labels = len(full_dataset.get_label_names())
     label_names_list = full_dataset.get_label_names()
+
+    with open(encoder_path, "wb") as f:
+        pickle.dump(full_dataset.label_encoder, f)
+    logging.info(f"{task_type.capitalize()} label encoder şuraya kaydedildi: {encoder_path}")
 
     generator = Generator().manual_seed(config["seed"])
     train_val_size = int(0.8 * len(full_dataset))
@@ -536,15 +541,13 @@ def run_training_stage(config, trial, task_type):
                                  num_training_steps=num_training_steps)
 
     start_epoch, best_val_acc = 0, 0.0
-    # Checkpoint yükleme mantığı...
-
     for epoch in range(start_epoch, epochs):
         model.train()
         total_loss = 0
         progress_bar = tqdm(train_loader, desc=f"Trial {trial.number} Epoch {epoch + 1}/{epochs} ({task_type})")
         for batch in progress_bar:
             input_ids, attention_mask, labels = batch["input_ids"].to(device), batch["attention_mask"].to(device), \
-            batch["label"].to(device)
+                batch["label"].to(device)
             logits = model(input_ids, attention_mask)
             loss = criterion(logits, labels)
             optimizer.zero_grad()
@@ -592,7 +595,7 @@ def evaluate_hierarchical(config):
         multiclass_encoder = pickle.load(f)
 
     # İkili modelin "Non-Background" etiketinin ID'sini bul
-    non_background_binary_id = list(binary_encoder.transform(['Non-Background']))[0]
+    non_background_binary_id = list(binary_encoder.transform(['non-background']))[0]
 
     # Modelleri oluştur ve eğitilmiş en iyi ağırlıkları yükle
     binary_model = TransformerClassifier(model_name=config["model_name"], num_labels=len(binary_encoder.classes_))
@@ -651,7 +654,7 @@ def evaluate_hierarchical(config):
 
             # İkili modelin "Background" dediği verilerin etiketini de ekle (ID: 0)
             background_indices = (binary_preds != non_background_binary_id).nonzero(as_tuple=True)[0]
-            background_orig_id = full_dataset_orig.label_encoder.transform(['Background'])[0]
+            background_orig_id = full_dataset_orig.label_encoder.transform(['background'])[0]
             final_preds[background_indices] = background_orig_id
 
             all_preds.extend(final_preds.cpu().numpy())
@@ -675,8 +678,8 @@ def objective(trial):
         "batch_size": trial.suggest_categorical("batch_size", [16, 32]),
         "lr_binary": trial.suggest_float("lr_binary", 1e-5, 5e-5, log=True),
         "lr_multiclass": trial.suggest_float("lr_multiclass", 1e-5, 5e-5, log=True),
-        "epochs_binary": trial.suggest_int("epochs_binary", 2, 5),
-        "epochs_multiclass": trial.suggest_int("epochs_multiclass", 5, 15),
+        "epochs_binary": trial.suggest_int("epochs_binary", 2, 8),
+        "epochs_multiclass": trial.suggest_int("epochs_multiclass", 5, 20),
 
         # Yollar
         "checkpoint_path_binary": os.path.join(output_dir_base, "binary/"),
@@ -700,6 +703,18 @@ def objective(trial):
 
     # 3. Aşama: İki modelin ortak performansını ölç
     overall_accuracy = evaluate_hierarchical(config)
+
+    logging.info(f"Deneme #{trial.number} tamamlandı. Tokenizer ve yapılandırma kaydediliyor...")
+
+    # Tokenizer'ı özel token ile birlikte kaydet
+    tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
+    special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
+    tokenizer.add_special_tokens(special_tokens_dict)
+    tokenizer.save_pretrained(output_dir_base) # Ana deneme klasörüne kaydet
+
+    config_path = os.path.join(output_dir_base, "trial_config.json")
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
 
     # Optuna'ya optimize edeceği değeri döndür
     return overall_accuracy
