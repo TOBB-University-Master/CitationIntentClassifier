@@ -15,14 +15,17 @@ from collections import Counter
 from dataset import CitationDataset
 from generic_model import TransformerClassifier
 from tqdm import tqdm
+from functools import partial
 
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
 # ==============================================================================
-MODEL_NAME = "dbmdz/bert-base-turkish-cased"
-# MODEL_NAME = "dbmdz/electra-base-turkish-cased-discriminator"
-# MODEL_NAME = "xlm-roberta-base"
-# MODEL_NAME = "microsoft/deberta-v3-base"
+MODEL_NAMES = [
+    # "dbmdz/bert-base-turkish-cased",
+    "dbmdz/electra-base-turkish-cased-discriminator",
+    "xlm-roberta-base",
+    "microsoft/deberta-v3-base"
+]
 
 DATA_PATH = "data/data_v2.csv"
 
@@ -665,13 +668,13 @@ def evaluate_hierarchical(config):
     return overall_accuracy
 
 
-def objective(trial):
-    model_short_name = MODEL_NAME.split('/')[-1]
+def objective(trial, model_name):
+    model_short_name = model_name.split('/')[-1]
     output_dir_base = f"checkpoints_v2/{model_short_name}/trial_{trial.number}/"
 
     config = {
         "data_path": DATA_PATH,
-        "model_name": MODEL_NAME,
+        "model_name": model_name,
         "seed": 42,
 
         # Denenecek Hiperparametreler
@@ -767,32 +770,40 @@ def print_dataset_info(model_name, data_path, seed):
 
 if __name__ == "__main__":
     if DATASET_INFO:
-        print_dataset_info(model_name=MODEL_NAME, data_path=DATA_PATH, seed=42)
+        print_dataset_info(model_name=MODEL_NAMES[0], data_path=DATA_PATH, seed=42)
     else:
-        model_short_name = MODEL_NAME.split('/')[-1]
-        study_name = f"{model_short_name}_hiearchical_study"
-        storage_path = f"sqlite:///{model_short_name}_hierarchical.db"
+        for model_name in MODEL_NAMES:
+            model_short_name = model_name.split('/')[-1]
+            study_name = f"{model_short_name}_hiearchical_study"
+            storage_path = f"sqlite:///{model_short_name}_hierarchical.db"
 
-        print(f"🚀 Hiyerarşik Optimizasyon Başlatılıyor 🚀")
-        print(f"Model: {MODEL_NAME}")
-        print(f"Çalışma Adı (Study Name): {study_name}")
-        print(f"Veritabanı Dosyası: {storage_path}")
-        print("-------------------------------------------------")
+            print(f"🚀 Hiyerarşik Optimizasyon Başlatılıyor 🚀")
+            print(f"Model: {model_name}")
+            print(f"Çalışma Adı (Study Name): {study_name}")
+            print(f"Veritabanı Dosyası: {storage_path}")
+            print("-------------------------------------------------")
 
-        study = optuna.create_study(
-            study_name=study_name,
-            storage=storage_path,
-            load_if_exists=True,
-            direction="maximize"
-        )
+            study = optuna.create_study(
+                study_name=study_name,
+                storage=storage_path,
+                load_if_exists=True,
+                direction="maximize"
+            )
 
-        # Hiyerarşik model daha karmaşık olduğu için deneme sayısını artırmak iyi olabilir
-        study.optimize(objective, n_trials=50)
+            # Optuna'ya o anki model_name'i geçmek için `functools.partial` kullanıyoruz.
+            # Bu, `objective(trial, model_name=model_name)` fonksiyonunu `objective_with_model(trial)`
+            # haline getirir, ki bu da optuna'nın beklediği formattır.
+            objective_with_model = partial(objective, model_name=model_name)
 
-        print("\nOptimizasyon tamamlandı.")
-        print("En iyi deneme:")
-        trial = study.best_trial
-        print(f"  Değer (En Yüksek Birleşik Doğruluk): {trial.value}")
-        print("  En İyi Parametreler: ")
-        for key, value in trial.params.items():
-            print(f"    {key}: {value}")
+            # Hiyerarşik model daha karmaşık olduğu için deneme sayısını artırmak iyi olabilir
+            study.optimize(objective_with_model, n_trials=50)
+
+            print("\nOptimizasyon tamamlandı.")
+            print("En iyi deneme:")
+            trial = study.best_trial
+            print(f"  Değer (En Yüksek Birleşik Doğruluk): {trial.value}")
+            print("  En İyi Parametreler: ")
+            for key, value in trial.params.items():
+                print(f"    {key}: {value}")
+
+        print("TÜM MODELLERİN OPTİMİZASYONU TAMAMLANDI.")

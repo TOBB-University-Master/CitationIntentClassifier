@@ -8,6 +8,9 @@ from torch.optim import AdamW
 from dataset import CitationDataset
 from generic_model import TransformerClassifier
 from tqdm import tqdm
+import torch.nn.functional as F
+import argparse
+import sys
 import os
 import logging
 import json
@@ -17,14 +20,46 @@ import optuna   # Optuna kütüphanesi hiperparametre optimizasyonu için
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
 # ==============================================================================
-# MODEL_NAME = "dbmdz/bert-base-turkish-cased"
-# MODEL_NAME = "dbmdz/electra-base-turkish-cased-discriminator"
- #MODEL_NAME = "xlm-roberta-base"
-MODEL_NAME = "microsoft/deberta-v3-base"
+MODELS = [
+    "dbmdz/bert-base-turkish-cased",
+    "dbmdz/electra-base-turkish-cased-discriminator",
+    "xlm-roberta-base",
+    "microsoft/deberta-v3-base"
+]
 
 DATA_PATH = "data/data_v2.csv"
 # ==============================================================================
 
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
+        """
+        Focal Loss - Dengesiz veri setleri için etkilidir.
+        alpha: Sınıf ağırlıkları.
+        gamma: Odaklanma parametresi. Yanlış sınıflandırılan örneklere daha fazla odaklanmayı sağlar.
+        """
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = (1 - pt)**self.gamma * ce_loss
+
+        if self.alpha is not None:
+            if self.alpha.device != focal_loss.device:
+                self.alpha = self.alpha.to(focal_loss.device)
+            alpha_t = self.alpha[targets]
+            focal_loss = alpha_t * focal_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
 
 """
      Eğitim sürecindeki önemli bilgileri (epoch başlangıcı, kayıp değeri, doğruluk vb.) hem bir dosyaya (training.log) 
@@ -280,6 +315,21 @@ def objective(trial):
 '''
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Transformer Modeli Eğitimi için Hiperparametre Optimizasyonu")
+    parser.add_argument('--model_index',
+                        type=int,
+                        required=True,
+                        help=f'Eğitilecek modelin MODELS listesindeki indeksi (0-{len(MODELS) - 1} arası).')
+    args = parser.parse_args()
+    model_index = args.model_index
+
+    # Gelen indeksin geçerli olup olmadığını kontrol et
+    if not 0 <= model_index < len(MODELS):
+        print(f"HATA: Geçersiz model indeksi: {model_index}. İndeks 0 ile {len(MODELS) - 1} arasında olmalıdır.")
+        sys.exit(1)
+
+    # İndeksi kullanarak model adını listeden seç
+    MODEL_NAME = MODELS[model_index]
 
     model_short_name = MODEL_NAME.split('/')[-1]
     study_name = f"{model_short_name}_study"
