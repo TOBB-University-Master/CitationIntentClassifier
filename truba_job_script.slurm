@@ -29,4 +29,4 @@ module load apps/truba-ai/gpu-2024.0
 echo "Ortam yüklendi, Python betiği başlatılıyor..."
 echo "-------------------------------------------------"
 
-python -u train_v1.py --model_index "$SLURM_ARRAY_TASK_ID"
+python -u train_v3.py --model_index "$SLURM_ARRAY_TASK_ID"

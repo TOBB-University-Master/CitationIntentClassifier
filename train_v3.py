@@ -1,3 +1,4 @@
+import argparse
 import torch
 import torch.nn as nn
 import os
@@ -518,48 +519,57 @@ def print_dataset_info(model_name, data_path, seed):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Hierarchical Classifier Training with Optuna")
+    parser.add_argument("--model_index", type=int, required=True, help="Index of the model to train from MODEL_NAMES list.")
+    args = parser.parse_args()
+    model_index = args.model_index
 
     if DATASET_INFO:
         print_dataset_info(model_name=MODEL_NAMES[0], data_path=DATA_PATH, seed=42)
     else:
-        for model_name in MODEL_NAMES:
-            print(f"\n\n{'=' * 60}")
-            print(f"--- BAŞLATILIYOR: {model_name} için {NUMBER_TRIALS} denemelik optimizasyon ---")
-            print(f"{'=' * 60}\n")
 
-            # Optuna çalışma dizini ve çalışma adı ayarları
-            try:
-                model_short_name = model_name.split('/')[-1]
-                study_name = f"{model_short_name}_hiearchical_study"
+        try:
+            model_name = MODEL_NAMES[model_index]
+        except IndexError:
+            print(f"HATA: Geçersiz model_index: {model_index}. Bu değer 0 ile {len(MODEL_NAMES) - 1} arasında olmalıdır.")
+            return
 
-                # .db dosyalarını da ana çıktı klasörüne kaydet
-                os.makedirs(DATA_OUTPUT_PATH, exist_ok=True)
-                storage_path = f"sqlite:///{os.path.join(DATA_OUTPUT_PATH, f'{model_short_name}_hierarchical.db')}"
+        print(f"\n\n{'=' * 60}")
+        print(f"--- BAŞLATILIYOR: {model_name} için {NUMBER_TRIALS} denemelik optimizasyon ---")
+        print(f"{'=' * 60}\n")
 
-                study = optuna.create_study(
-                    study_name=study_name,
-                    storage=storage_path,
-                    load_if_exists=True,
-                    direction="maximize"
-                )
+        # Optuna çalışma dizini ve çalışma adı ayarları
+        try:
+            model_short_name = model_name.split('/')[-1]
+            study_name = f"{model_short_name}_hiearchical_study"
 
-                objective_with_model = partial(objective, model_name=model_name)
-                study.optimize(objective_with_model, n_trials=NUMBER_TRIALS)
+            # .db dosyalarını da ana çıktı klasörüne kaydet
+            os.makedirs(DATA_OUTPUT_PATH, exist_ok=True)
+            storage_path = f"sqlite:///{os.path.join(DATA_OUTPUT_PATH, f'{model_short_name}_hierarchical.db')}"
 
-                print(f"\n--- {model_name} İÇİN OPTİMİZASYON TAMAMLANDI ---")
-                print(f"En iyi deneme (Best trial): {study.best_trial.number}")
-                print(f"En iyi değer (Best value - Uzman Model Val Acc): {study.best_value:.4f}")
-                print("En iyi parametreler (Best params):")
-                for key, value in study.best_params.items():
-                    print(f"    {key}: {value}")
+            study = optuna.create_study(
+                study_name=study_name,
+                storage=storage_path,
+                load_if_exists=True,
+                direction="maximize"
+            )
 
-                model_short_name = model_name.split('/')[-1]
-                best_trial_dir = os.path.join(DATA_OUTPUT_PATH, f"trial_{study.best_trial.number}_{model_short_name}/")
-                print(f"\nEn iyi modelin ve logların kaydedildiği klasör: {best_trial_dir}")
+            objective_with_model = partial(objective, model_name=model_name)
+            study.optimize(objective_with_model, n_trials=NUMBER_TRIALS)
 
-            except Exception as e:
-                print(f"KRİTİK HATA: {model_name} için optimizasyon durduruldu. Hata: {e}")
-                continue
+            print(f"\n--- {model_name} İÇİN OPTİMİZASYON TAMAMLANDI ---")
+            print(f"En iyi deneme (Best trial): {study.best_trial.number}")
+            print(f"En iyi değer (Best value - Uzman Model Val Acc): {study.best_value:.4f}")
+            print("En iyi parametreler (Best params):")
+            for key, value in study.best_params.items():
+                print(f"    {key}: {value}")
+
+            model_short_name = model_name.split('/')[-1]
+            best_trial_dir = os.path.join(DATA_OUTPUT_PATH, f"trial_{study.best_trial.number}_{model_short_name}/")
+            print(f"\nEn iyi modelin ve logların kaydedildiği klasör: {best_trial_dir}")
+
+        except Exception as e:
+            print(f"KRİTİK HATA: {model_name} için optimizasyon durduruldu. Hata: {e}")
 
         print(f"\n\n{'=' * 60}")
         print("TÜM MODELLERİN OPTİMİZASYONU TAMAMLANDI.")
