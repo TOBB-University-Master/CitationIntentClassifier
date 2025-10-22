@@ -21,7 +21,7 @@ from functools import partial
 #                      *** DENEY YAPILANDIRMASI ***
 # ==============================================================================
 MODEL_NAMES = [
-    # "dbmdz/bert-base-turkish-cased",
+    "dbmdz/bert-base-turkish-cased",
     "dbmdz/electra-base-turkish-cased-discriminator",
     "xlm-roberta-base",
     "microsoft/deberta-v3-base"

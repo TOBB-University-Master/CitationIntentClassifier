@@ -7,6 +7,27 @@ from torch.utils.data import Dataset
 from sqlalchemy import create_engine
 from sklearn.preprocessing import LabelEncoder
 
+"""
+    <-- ORJİNAL SORGU (citation_context ile) --->
+    select distinct (cc.citation_context_clean), LOWER(cc.section) as section, cic.citation_intent
+    from cec_citation_intent cic
+    join cec_citation cc on cc.id=cic.citation_id
+    where cic.user_id like '48ed0fcf-4e78-4913-b96b-d942646d34b4' 
+      and cc.state is null 
+      and cic.citation_intent not like 'other'
+      and cc.citation_context_clean not like '%<CITE>%<CITE>%'
+      and cc.section is not null;
+        
+    <-- ORJİNAL SORGU (citation_context ile) --->
+    select distinct(cc.citation_context_pre), LOWER(cc.section) as section, cic.citation_intent
+    from cec_citation_intent cic
+    join cec_citation cc on cc.id=cic.citation_id
+    where cic.user_id like '48ed0fcf-4e78-4913-b96b-d942646d34b4' 
+      and cc.state is null 
+      and cic.citation_intent not like 'other'
+      and cc.citation_context_clean not like '%<CITE>%<CITE>%'
+      and cc.section is not null;
+"""
 class CitationDataset(Dataset):
     def __init__(self,
                  tokenizer,
