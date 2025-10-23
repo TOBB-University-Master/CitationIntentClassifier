@@ -33,7 +33,7 @@ class CitationDataset(Dataset):
                  tokenizer,
                  csv_path="data/train.csv",
                  db_url="mysql+pymysql://root:root@localhost:3306/ULAKBIM-CABIM-UBYT-bs",
-                 max_len=128,
+                 max_len=256,
                  mode="labeled",
                  task = None,
                  include_section_in_input=False):
