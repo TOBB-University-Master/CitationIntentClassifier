@@ -1,0 +1,123 @@
+Kullanılan Cihaz: mps
+
+--------------------------------------------------
+ değerlendiriliyor: dbmdz/bert-base-turkish-cased
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_46 (Validation Accuracy: 0.9636)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Hiyerarşik test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.9673
+Macro F1-Score: 0.9107
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.98      0.99      0.98       420
+       basis       0.95      0.93      0.94        74
+      differ       1.00      0.70      0.82        10
+     discuss       0.90      0.90      0.90        30
+     support       0.88      0.94      0.91        16
+
+    accuracy                           0.97       550
+   macro avg       0.94      0.89      0.91       550
+weighted avg       0.97      0.97      0.97       550
+
+
+Confusion matrix kaydedildi: outputs/experiment_1_2_hierarchical/confusion_matrix_bert-base-turkish-cased.png
+--------------------------------------------------
+ değerlendiriliyor: dbmdz/electra-base-turkish-cased-discriminator
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_41 (Validation Accuracy: 0.9636)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Hiyerarşik test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.9673
+Macro F1-Score: 0.8999
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.97      0.99      0.98       420
+       basis       0.97      0.93      0.95        74
+      differ       1.00      0.60      0.75        10
+     discuss       0.86      0.83      0.85        30
+     support       1.00      0.94      0.97        16
+
+    accuracy                           0.97       550
+   macro avg       0.96      0.86      0.90       550
+weighted avg       0.97      0.97      0.97       550
+
+
+Confusion matrix kaydedildi: outputs/experiment_1_2_hierarchical/confusion_matrix_electra-base-turkish-cased-discriminator.png
+--------------------------------------------------
+ değerlendiriliyor: xlm-roberta-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_16 (Validation Accuracy: 0.9545)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Hiyerarşik test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.9600
+Macro F1-Score: 0.8996
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.97      0.99      0.98       420
+       basis       0.94      0.91      0.92        74
+      differ       0.80      0.80      0.80        10
+     discuss       0.86      0.80      0.83        30
+     support       1.00      0.94      0.97        16
+
+    accuracy                           0.96       550
+   macro avg       0.91      0.89      0.90       550
+weighted avg       0.96      0.96      0.96       550
+
+
+Confusion matrix kaydedildi: outputs/experiment_1_2_hierarchical/confusion_matrix_xlm-roberta-base.png
+--------------------------------------------------
+ değerlendiriliyor: microsoft/deberta-v3-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_25 (Validation Accuracy: 0.9303)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Hiyerarşik test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.9545
+Macro F1-Score: 0.8425
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.96      0.99      0.98       420
+       basis       0.97      0.92      0.94        74
+      differ       0.86      0.60      0.71        10
+     discuss       0.95      0.67      0.78        30
+     support       0.74      0.88      0.80        16
+
+    accuracy                           0.95       550
+   macro avg       0.90      0.81      0.84       550
+weighted avg       0.96      0.95      0.95       550
+
+
+Confusion matrix kaydedildi: outputs/experiment_1_2_hierarchical/confusion_matrix_deberta-v3-base.png
+
+
+============================================================
+     TÜM MODELLERİN ÖZET SONUÇLARI (Experiment 1.2 - Hierarchical)
+============================================================
+                              model_name  accuracy  macro_f1
+                 bert-base-turkish-cased  0.967273  0.910720
+electra-base-turkish-cased-discriminator  0.967273  0.899851
+                        xlm-roberta-base  0.960000  0.899638
+                         deberta-v3-base  0.954545  0.842473
+============================================================
+
+Karşılaştırma grafiği kaydedildi: outputs/experiment_1_2_hierarchical/model_comparison.png

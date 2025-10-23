@@ -30,6 +30,7 @@ MODEL_NAMES = [
 DATA_PATH = "data/data_v2.csv"
 
 DATASET_INFO = False
+NUMBER_TRIALS = 20
 # ==============================================================================
 
 
@@ -796,7 +797,7 @@ if __name__ == "__main__":
             objective_with_model = partial(objective, model_name=model_name)
 
             # Hiyerarşik model daha karmaşık olduğu için deneme sayısını artırmak iyi olabilir
-            study.optimize(objective_with_model, n_trials=50)
+            study.optimize(objective_with_model, n_trials=NUMBER_TRIALS)
 
             print("\nOptimizasyon tamamlandı.")
             print("En iyi deneme:")

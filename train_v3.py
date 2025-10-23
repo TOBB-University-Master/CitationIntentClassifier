@@ -28,7 +28,7 @@ MODEL_NAMES = [
 DATA_PATH = "data/data_v3.csv"
 DATA_OUTPUT_PATH = "checkpoints_v3_trials/"
 DATASET_INFO = False
-NUMBER_TRIALS = 40
+NUMBER_TRIALS = 20
 # -----------------------------------------------------
 
 
