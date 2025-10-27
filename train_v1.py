@@ -24,7 +24,8 @@ MODELS = [
     "dbmdz/bert-base-turkish-cased",
     "dbmdz/electra-base-turkish-cased-discriminator",
     "xlm-roberta-base",
-    "microsoft/deberta-v3-base"
+    "microsoft/deberta-v3-base",
+    "answerdotai/ModernBERT-base"
 ]
 
 DATA_PATH = "data/data_v2.csv"
@@ -154,7 +155,7 @@ def objective(trial):
 
     # Veriyi yükle ve hazırla
     logging.info("Ana veri seti yükleniyor: data/data_v1.csv")
-    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=config['data_path'])
+    full_dataset = CitationDataset(tokenizer=tokenizer, max_len=128, mode="labeled", csv_path=config['data_path'])
     logging.info(f"Toplam kayıt sayısı: {len(full_dataset)}")
 
     num_labels = len(full_dataset.get_label_names())
@@ -318,7 +319,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Transformer Modeli Eğitimi için Hiperparametre Optimizasyonu")
     parser.add_argument('--model_index',
                         type=int,
-                        required=True,
+                        default=4,
                         help=f'Eğitilecek modelin MODELS listesindeki indeksi (0-{len(MODELS) - 1} arası).')
     args = parser.parse_args()
     model_index = args.model_index

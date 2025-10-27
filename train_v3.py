@@ -23,12 +23,14 @@ MODEL_NAMES = [
     "dbmdz/bert-base-turkish-cased",
     "dbmdz/electra-base-turkish-cased-discriminator",
     "xlm-roberta-base",
-    "microsoft/deberta-v3-base"
+    "microsoft/deberta-v3-base",
+    "answerdotai/ModernBERT-base"
 ]
 DATA_PATH = "data/data_v3.csv"
 DATA_OUTPUT_PATH = "checkpoints_v3_trials/"
 DATASET_INFO = False
-NUMBER_TRIALS = 20
+NUMBER_TRIALS = 10
+DEFAULT_MODEL_INDEX = 4
 # -----------------------------------------------------
 
 
@@ -520,7 +522,7 @@ def print_dataset_info(model_name, data_path, seed):
 
 def main():
     parser = argparse.ArgumentParser(description="Hierarchical Classifier Training with Optuna")
-    parser.add_argument("--model_index", type=int, required=True, help="Index of the model to train from MODEL_NAMES list.")
+    parser.add_argument("--model_index", type=int, default=DEFAULT_MODEL_INDEX, help="Index of the model to train from MODEL_NAMES list.")
     args = parser.parse_args()
     model_index = args.model_index
 

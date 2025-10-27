@@ -5,6 +5,7 @@ import logging
 import pickle
 import json
 import optuna
+import argparse
 
 from torch import Generator
 from sklearn.metrics import classification_report, accuracy_score
@@ -24,13 +25,15 @@ MODEL_NAMES = [
     "dbmdz/bert-base-turkish-cased",
     "dbmdz/electra-base-turkish-cased-discriminator",
     "xlm-roberta-base",
-    "microsoft/deberta-v3-base"
+    "microsoft/deberta-v3-base",
+    "answerdotai/ModernBERT-base"
 ]
 
 DATA_PATH = "data/data_v2.csv"
 
 DATASET_INFO = False
 NUMBER_TRIALS = 20
+DEFAULT_MODEL_INDEX = 4
 # ==============================================================================
 
 
@@ -126,7 +129,7 @@ def train_top_level_classifier(config):
 
     # Veri Seti (İkili görev için)
     logging.info("İkili sınıflandırma için veri seti yükleniyor...")
-    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path="data/data_v1.csv", task='binary')
+    full_dataset = CitationDataset(tokenizer=tokenizer, max_len=128 ,mode="labeled", csv_path="data/data_v1.csv", task='binary')
     num_labels = len(full_dataset.get_label_names())  # Bu 2 olmalı
     label_names_list = full_dataset.get_label_names()
     logging.info(f"Sınıf sayısı: {num_labels}, Sınıflar: {label_names_list}")
@@ -285,7 +288,7 @@ def train_expert_classifier(config):
 
     # Veri Seti (Çok sınıflı görev için)
     logging.info("Çok sınıflı (Non-Background) veri seti yükleniyor...")
-    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path="data/data_v1.csv", task='multiclass')
+    full_dataset = CitationDataset(tokenizer=tokenizer, max_len=128, mode="labeled", csv_path="data/data_v1.csv", task='multiclass')
     num_labels = len(full_dataset.get_label_names())  # Bu 4 olmalı
     label_names_list = full_dataset.get_label_names()
     logging.info(f"Sınıf sayısı: {num_labels}, Sınıflar: {label_names_list}")
@@ -515,7 +518,7 @@ def run_training_stage(config, trial, task_type):
     special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
     tokenizer.add_special_tokens(special_tokens_dict)
 
-    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=config['data_path'], task=task_type)
+    full_dataset = CitationDataset(tokenizer=tokenizer, max_len=128, mode="labeled", csv_path=config['data_path'], task=task_type)
     num_labels = len(full_dataset.get_label_names())
     label_names_list = full_dataset.get_label_names()
 
@@ -590,7 +593,7 @@ def evaluate_hierarchical(config):
     tokenizer.add_special_tokens(special_tokens_dict)
 
     # ÖNEMLİ: Değerlendirme için tüm sınıfları içeren orijinal veri setini kullan
-    full_dataset_orig = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=config['data_path'], task='all')
+    full_dataset_orig = CitationDataset(tokenizer=tokenizer, max_len=128, mode="labeled", csv_path=config['data_path'], task='all')
 
     # İkili ve Çok Sınıflı görevlerin label encoder'larını yükle
     with open(config["label_encoder_binary_path"], "rb") as f:
@@ -752,7 +755,7 @@ def print_dataset_info(model_name, data_path, seed):
         print(f"\n{'=' * 20} GÖREV: {task.upper()} {'=' * 20}")
 
         # Veri setini ilgili görev için yükle
-        full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=data_path, task=task)
+        full_dataset = CitationDataset(tokenizer=tokenizer, max_len=128,mode="labeled", csv_path=data_path, task=task)
 
         # Veriyi ayırma (Train/Val/Test)
         generator = Generator().manual_seed(seed)
@@ -770,10 +773,27 @@ def print_dataset_info(model_name, data_path, seed):
         log_class_distribution(test_dataset, "Test Seti")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Hierarchical Classifier Training with Optuna")
+    parser.add_argument("--model_index", type=int, default=DEFAULT_MODEL_INDEX,
+                        help="Index of the model to train from MODEL_NAMES list.")
+    args = parser.parse_args()
+    model_index = args.model_index
+
     if DATASET_INFO:
         print_dataset_info(model_name=MODEL_NAMES[0], data_path=DATA_PATH, seed=42)
     else:
-        for model_name in MODEL_NAMES:
+
+        try:
+            model_name = MODEL_NAMES[model_index]
+        except IndexError:
+            print(f"HATA: Geçersiz model_index: {model_index}. Bu değer 0 ile {len(MODEL_NAMES) - 1} arasında olmalıdır.")
+
+        print(f"\n\n{'=' * 60}")
+        print(f"--- BAŞLATILIYOR: {model_name} için {NUMBER_TRIALS} denemelik optimizasyon ---")
+        print(f"{'=' * 60}\n")
+
+        # Optuna çalışma dizini ve çalışma adı ayarları
+        try:
             model_short_name = model_name.split('/')[-1]
             study_name = f"{model_short_name}_hiearchical_study"
             storage_path = f"sqlite:///{model_short_name}_hierarchical.db"
@@ -807,4 +827,9 @@ if __name__ == "__main__":
             for key, value in trial.params.items():
                 print(f"    {key}: {value}")
 
+        except Exception as e:
+            print(f"KRİTİK HATA: {model_name} için optimizasyon durduruldu. Hata: {e}")
+
+        print(f"\n\n{'=' * 60}")
         print("TÜM MODELLERİN OPTİMİZASYONU TAMAMLANDI.")
+        print(f"{'=' * 60}")
