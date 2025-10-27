@@ -13,7 +13,7 @@
 #SBATCH --cpus-per-task=20
 #SBATCH --time=1-00:00:00
 #SBATCH --account=kkaraca
-#SBATCH --array=0-3
+#SBATCH --array=0-4
 
 # ==============================================================================
 #                      *** SLURM SETTINGS ***
