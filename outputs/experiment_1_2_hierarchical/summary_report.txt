@@ -108,6 +108,33 @@ weighted avg       0.96      0.95      0.95       550
 
 
 Confusion matrix kaydedildi: outputs/experiment_1_2_hierarchical/confusion_matrix_deberta-v3-base.png
+--------------------------------------------------
+ değerlendiriliyor: answerdotai/ModernBERT-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_5 (Validation Accuracy: 0.8000)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Hiyerarşik test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.7873
+Macro F1-Score: 0.4971
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.83      0.93      0.88       420
+       basis       0.52      0.34      0.41        74
+      differ       0.50      0.30      0.38        10
+     discuss       0.67      0.20      0.31        30
+     support       0.53      0.50      0.52        16
+
+    accuracy                           0.79       550
+   macro avg       0.61      0.45      0.50       550
+weighted avg       0.76      0.79      0.76       550
+
+
+Confusion matrix kaydedildi: outputs/experiment_1_2_hierarchical/confusion_matrix_ModernBERT-base.png
 
 
 ============================================================
@@ -118,6 +145,7 @@ Confusion matrix kaydedildi: outputs/experiment_1_2_hierarchical/confusion_matri
 electra-base-turkish-cased-discriminator  0.967273  0.899851
                         xlm-roberta-base  0.960000  0.899638
                          deberta-v3-base  0.954545  0.842473
+                         ModernBERT-base  0.787273  0.497068
 ============================================================
 
 Karşılaştırma grafiği kaydedildi: outputs/experiment_1_2_hierarchical/model_comparison.png

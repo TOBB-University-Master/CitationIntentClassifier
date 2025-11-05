@@ -22,7 +22,8 @@ MODELS = [
     "dbmdz/bert-base-turkish-cased",
     "dbmdz/electra-base-turkish-cased-discriminator",
     "xlm-roberta-base",
-    "microsoft/deberta-v3-base"
+    "microsoft/deberta-v3-base",
+    "answerdotai/ModernBERT-base"
 ]
 DATA_PATH = "data/data_v2.csv"
 BASE_CHECKPOINT_DIR = "checkpoints_v2"

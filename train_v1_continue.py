@@ -10,7 +10,7 @@ import json
 import argparse  # Komut satırından argüman almak için
 
 # Orijinal betiğinizdeki yardımcı sınıfları ve fonksiyonları import edin
-from train_v1 import setup_logging, evaluate
+from train_v1_1 import setup_logging, evaluate
 from dataset import CitationDataset
 from generic_model import TransformerClassifier
 

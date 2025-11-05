@@ -14,8 +14,6 @@ from tqdm import tqdm
 from dataset import CitationDataset
 from generic_model import TransformerClassifier
 
-# TODO: Bu script test edilmedi ve debug edilmedi !!!
-
 # ==============================================================================
 #                      *** YAPILANDIRMA ***
 # ==============================================================================
@@ -23,13 +21,13 @@ MODELS = [
     "dbmdz/bert-base-turkish-cased",
     "dbmdz/electra-base-turkish-cased-discriminator",
     "xlm-roberta-base",
-    "microsoft/deberta-v3-base"
+    "microsoft/deberta-v3-base",
+    "answerdotai/ModernBERT-base"
 ]
 DATA_PATH = "data/data_v3.csv"
 BASE_CHECKPOINT_DIR = "checkpoints_v3_trials"
 SEED = 42
 BATCH_SIZE = 16
-
 RESULTS_DIR = "outputs/experiment_1_3_context_aware_hierarchical"
 # ==============================================================================
 
@@ -114,10 +112,8 @@ def find_best_trial_by_rerunning_validation(model_name, model_checkpoint_dir, de
             multiclass_model.to(device)
 
             # Doğrulama (Validation) setini yeniden oluştur (Context-Aware olarak)
-            full_dataset = CitationDataset(tokenizer=tokenizer,
-                                                csv_path=DATA_PATH,
-                                                task=None,
-                                                include_section_in_input=True)
+            full_dataset = CitationDataset(tokenizer=tokenizer, csv_path=DATA_PATH, max_len=256, task=None,
+                                           include_section_in_input=True)
             full_label_encoder = full_dataset.label_encoder
             generator = Generator().manual_seed(SEED)
             train_val_size = int(0.8 * len(full_dataset))

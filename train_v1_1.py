@@ -14,9 +14,8 @@ import sys
 import os
 import logging
 import json
-import pickle
-import optuna
-from comet_ml import Experiment
+import pickle  # LabelEncoder ve SectionEncoder'ı kaydetmek için
+import optuna   # Optuna kütüphanesi hiperparametre optimizasyonu için
 
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
@@ -30,10 +29,6 @@ MODELS = [
 ]
 
 DATA_PATH = "data/data_v2.csv"
-NUMBER_EPOCHS = 10
-NUMBER_TRIALS = 4
-COMET_PROJECT_NAME_PREFIX = "experiment-1-flat-01"
-CHECKPOINT_DIR = "checkpoints_v1_02"
 # ==============================================================================
 
 
@@ -86,11 +81,10 @@ def setup_logging(log_file):
 """
     Modeli değerlendirir ve doğruluk ile sınıflandırma raporu döndürür.
 """
-def evaluate(model, data_loader, device, label_names,criterion):
+def evaluate(model, data_loader, device, label_names):
     model.eval()
     all_intent_preds = []
     all_intent_labels = []
-    total_val_loss = 0
 
     # Gradyan hesaplamalarını kapatır
     # Değerlendirme yapılırken modelin ağırlıkları güncellenmez
@@ -100,42 +94,21 @@ def evaluate(model, data_loader, device, label_names,criterion):
             attention_mask = batch["attention_mask"].to(device)
             intent_labels = batch["label"].to(device)
 
+            # Modele section_ids'ler de girdi olarak verildi
             intent_logits = model(input_ids, attention_mask)
-            loss = criterion(intent_logits, intent_labels)
-            total_val_loss += loss.item()
-
             intent_preds = torch.argmax(intent_logits, dim=1)
 
             all_intent_preds.extend(intent_preds.cpu().numpy())
             all_intent_labels.extend(intent_labels.cpu().numpy())
 
     intent_acc = accuracy_score(all_intent_labels, all_intent_preds)
-    intent_report = classification_report(
-        all_intent_labels,
-        all_intent_preds,
-        target_names=label_names,
-        zero_division=0)
+    intent_report = classification_report(all_intent_labels,
+                                          all_intent_preds,
+                                          target_names=label_names,
+                                          zero_division=0)
 
-    intent_report_str = classification_report(
-        all_intent_labels,
-        all_intent_preds,
-        target_names=label_names,
-        zero_division=0,
-        output_dict=False
-    )
-
-    report_dict = classification_report(
-        all_intent_labels,
-        all_intent_preds,
-        target_names=label_names,
-        zero_division=0,
-        output_dict=True  #
-    )
-
-    avg_val_loss = total_val_loss / len(data_loader)
-    val_macro_f1 = report_dict['macro avg']['f1-score']
-
-    return intent_acc, intent_report, avg_val_loss, val_macro_f1
+    # Sadece intent doğruluğu ve raporu döndürüldü
+    return intent_acc, intent_report
 
     """
         Args:
@@ -146,7 +119,7 @@ def objective(trial):
         "data_path": DATA_PATH,
         "model_name": MODEL_NAME,
         "batch_size": trial.suggest_categorical("batch_size", [16, 32]),
-        "epochs": NUMBER_EPOCHS,
+        "epochs": trial.suggest_int("epochs", 5,30),
         "lr": trial.suggest_float("lr", 1e-5, 5e-5, log=True),
         "weight_decay": trial.suggest_float("weight_decay", 0.0, 0.1),
         "seed": 42
@@ -154,19 +127,7 @@ def objective(trial):
 
     # Model adına göre dinamik çıktı klasörü oluştur
     model_short_name = config["model_name"].split('/')[-1]
-
-
-    experiment = Experiment(
-        api_key="LrkBSXNSdBGwikgVrzE2m73iw",
-        project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
-        workspace="kemalsami",
-        auto_log_co2=False,
-        auto_output_logging=None
-    )
-    experiment.set_name(f"trial_{trial.number}")
-    experiment.add_tag(model_short_name)
-
-    output_dir = f"{CHECKPOINT_DIR}/{model_short_name}/trial_{trial.number}/"
+    output_dir = f"checkpoints_v1/{model_short_name}/trial_{trial.number}/"
     os.makedirs(output_dir, exist_ok=True)
 
     # Dinamik dosya yolları
@@ -188,10 +149,6 @@ def objective(trial):
     logging.info(f"Parametreler: {json.dumps(trial.params, indent=4)}")
     logging.info(f"Cihaz seçildi: {device}")
     logging.info(f"Kullanılan Model: {config['model_name']}")
-
-    experiment.log_parameters(trial.params)
-    experiment.log_parameter("model_name", config["model_name"])
-    experiment.log_parameter("seed", config["seed"])
 
     # Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
@@ -263,7 +220,6 @@ def objective(trial):
     # Checkpoint kontrol
     start_epoch = 0
     best_val_acc = 0.0
-    best_val_f1 = 0.0
     if os.path.exists(config["checkpoint_path"]):
         checkpoint = torch.load(config["checkpoint_path"], map_location=device)
         # DİKKAT: Eğer önceki checkpoint eski model yapısından (iki çıktı) ise,
@@ -274,7 +230,6 @@ def objective(trial):
         lr_scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         best_val_acc = checkpoint.get("best_val_acc", 0.0)
-        best_val_f1 = checkpoint.get("best_val_f1", 0.0)
         logging.info(f"Checkpoint yüklendi, {start_epoch}. epoch'tan devam ediliyor.")
     else:
         logging.info("Yeni model eğitimi başlatılıyor.")
@@ -282,8 +237,6 @@ def objective(trial):
     # Eğitim Döngüsü
     for epoch in range(start_epoch, config["epochs"]):
         model.train()
-        all_train_preds = []
-        all_train_labels = []
         total_loss = 0
 
         progress_bar = tqdm(train_loader, desc=f"Trial {trial.number} Epoch {epoch + 1}/{config['epochs']}", leave=False)
@@ -305,52 +258,22 @@ def objective(trial):
             lr_scheduler.step()
 
             total_loss += loss.item()
-
-            # Train durumunda Tahminleri ve etiketleri topla
-            intent_preds = torch.argmax(intent_logits, dim=1)
-            all_train_preds.extend(intent_preds.cpu().numpy())
-            all_train_labels.extend(intent_labels.cpu().numpy())
-
             progress_bar.set_postfix(loss=f"{total_loss / (progress_bar.n + 1):.4f}")
 
         avg_train_loss = total_loss / len(train_loader)
         logging.info(f"Epoch {epoch + 1} Tamamlandı. Ortalama Eğitim Kaybı: {avg_train_loss:.4f}")
 
-        avg_train_acc = accuracy_score(all_train_labels, all_train_preds)
-
-        intent_val_acc, intent_report, avg_val_loss, val_macro_f1 = evaluate(
-            model, val_loader, device, label_names_list, criterion
+        intent_val_acc, intent_report = evaluate(
+            model, val_loader, device, label_names_list
         )
         logging.info(f"Doğrulama Başarımı (Intent Accuracy): {intent_val_acc:.4f}")
         logging.info(f"Intent Sınıflandırma Raporu:\n{intent_report}")
 
-
-        metrics_dict = {
-            "train_loss": avg_train_loss,
-            "train_accuracy": avg_train_acc,
-            "validation_loss": avg_val_loss,
-            "validation_accuracy": intent_val_acc,
-            "validation_macro_f1": val_macro_f1
-        }
-        experiment.log_metrics(metrics_dict, step=epoch + 1)
-
-
         # Sadece en iyi modeli ayrı bir dosyaya kaydet (intent accuracy'ye göre)
         if intent_val_acc > best_val_acc:
             best_val_acc = intent_val_acc
-        #    logging.info(f"🚀 Yeni en iyi doğrulama başarımı (Intent): {best_val_acc:.4f}. En iyi model kaydediliyor...")
-        #    torch.save(model.state_dict(), config["best_model_path"])
-            experiment.log_text(f"epoch_{epoch + 1}_best_report.txt", intent_report)
-            experiment.log_metric("best_validation_accuracy", best_val_acc, step=epoch + 1)
-
-        # Sadece en iyi modeli ayrı bir dosyaya kaydet (intent macro f1'e göre)
-        if val_macro_f1 > best_val_f1:
-            best_val_f1 = val_macro_f1
-            logging.info( f"🚀 Yeni en iyi doğrulama başarımı (Makro F1): {best_val_f1:.4f}. En iyi model kaydediliyor...")
+            logging.info(f"🚀 Yeni en iyi doğrulama başarımı (Intent): {best_val_acc:.4f}. En iyi model kaydediliyor...")
             torch.save(model.state_dict(), config["best_model_path"])
-
-            experiment.log_text(f"epoch_{epoch + 1}_best_report.txt", intent_report)
-            experiment.log_metric("best_validation_macro_f1", best_val_f1, step=epoch + 1)
 
         # Checkpoint'i her zaman kaydet
         torch.save({
@@ -358,8 +281,7 @@ def objective(trial):
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": lr_scheduler.state_dict(),
-            "best_val_acc": best_val_acc,
-            "best_val_f1": best_val_f1
+            "best_val_acc": best_val_acc
         }, config["checkpoint_path"])
 
     # Eğitim sonrası kayıt
@@ -372,15 +294,15 @@ def objective(trial):
 
 
     logging.info(f"--- Deneme #{trial.number} Tamamlandı. En İyi Doğrulama Başarımı: {best_val_acc:.4f} ---")
-    experiment.end()
-    return best_val_f1
+
+    return best_val_acc
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Transformer Modeli Eğitimi için Hiperparametre Optimizasyonu")
     parser.add_argument('--model_index',
                         type=int,
-                        default=0,
+                        default=4,
                         help=f'Eğitilecek modelin MODELS listesindeki indeksi (0-{len(MODELS) - 1} arası).')
     args = parser.parse_args()
     model_index = args.model_index
@@ -393,13 +315,9 @@ if __name__ == "__main__":
     # İndeksi kullanarak model adını listeden seç
     MODEL_NAME = MODELS[model_index]
 
-    absolute_checkpoint_dir = os.path.abspath(CHECKPOINT_DIR)
-
     model_short_name = MODEL_NAME.split('/')[-1]
     study_name = f"{model_short_name}_study"
-
-    os.makedirs(absolute_checkpoint_dir, exist_ok=True)
-    storage_path = f"sqlite:///{absolute_checkpoint_dir}/{model_short_name}.db"
+    storage_path = f"sqlite:///{model_short_name}.db"
 
     print(f"🚀 Optimizasyon Başlatılıyor 🚀")
     print(f"Model: {MODEL_NAME}")
@@ -415,7 +333,7 @@ if __name__ == "__main__":
     )
 
     # n_trials: Toplamda kaç farklı parametre kombinasyonu deneneceğini belirtir
-    study.optimize(objective, n_trials=NUMBER_TRIALS)
+    study.optimize(objective, n_trials=20)
 
     print("Optimizasyon tamamlandı.")
     print("En iyi deneme:")
