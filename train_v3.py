@@ -165,9 +165,12 @@ def train_top_level_classifier(config):
         generator=generator
     )
 
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"])
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"])
+    num_workers = config.get("num_workers", 0)
+    logging.info(f"DataLoader (Binary) için {num_workers} adet worker (CPU çekirdeği) kullanılacak.")
+
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=num_workers)
 
     if config["print_labels"]:
         label_names = full_dataset.label_encoder.classes_
@@ -214,6 +217,7 @@ def train_top_level_classifier(config):
         lr_scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         best_val_acc = checkpoint.get("best_val_acc", 0.0)
+        best_val_f1 = checkpoint.get("best_val_f1", 0.0)
         logging.info(f"Checkpoint bulundu, eğitime {start_epoch}. epoch'tan devam ediliyor.")
     else:
         logging.info("Yeni bir eğitim başlatılıyor, checkpoint bulunamadı.")
@@ -251,14 +255,14 @@ def train_top_level_classifier(config):
         logging.info(f"\nEpoch {epoch + 1} - Doğrulama Başarımı (Acc): {val_acc:.4f}")
         logging.info(f"Epoch {epoch + 1} - Doğrulama Başarımı (Macro F1): {val_macro_f1:.4f}\n{val_report}")
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            logging.info(f"🚀 Yeni en iyi ikili accuracy: {best_val_acc:.4f}")
-
         if val_macro_f1 > best_val_f1:
             best_val_f1 = val_macro_f1
             logging.info(f"🚀 Yeni en iyi ikili model (Macro F1) kaydediliyor: {best_val_f1:.4f}")
             torch.save(model.state_dict(), config["best_model_path_binary"])
+
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            logging.info(f"🚀 Yeni en iyi uzman (Accuracy): {best_val_acc:.4f} (Not: Model F1'e göre kaydedilir)")
 
     logging.info("\n--- İkili Model Test Süreci ---")
     model.load_state_dict(torch.load(config['best_model_path_binary']))
@@ -315,9 +319,12 @@ def train_expert_classifier(config):
         generator=generator
     )
 
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"])
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"])
+    num_workers = config.get("num_workers", 0)
+    logging.info(f"DataLoader (Multiclass) için {num_workers} adet worker (CPU çekirdeği) kullanılacak.")
+
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=num_workers)
 
     if config["print_labels"]:
         label_names = full_dataset.label_encoder.classes_
@@ -434,6 +441,13 @@ def objective(trial, model_name):
     batch_size = trial.suggest_categorical("batch_size", [16, 32])
     epochs = NUMBER_EPOCHS
 
+    try:
+        num_cpus = int(os.environ["SLURM_CPUS_PER_TASK"])
+    except (KeyError, TypeError):
+        num_cpus = 4
+
+    data_loader_workers = max(0, num_cpus - 1)
+
     # --- Config Dosyasını Oluştur ---
     model_short_name = model_name.split('/')[-1]
     output_dir = os.path.join(DATA_OUTPUT_PATH, f"trial_{trial.number}_{model_short_name}/")
@@ -445,6 +459,7 @@ def objective(trial, model_name):
         "model_name": model_name,
         "seed": 42,
         "print_labels": False,
+        "num_workers": data_loader_workers,
 
         # Adım 1 için dinamik yollar
         "checkpoint_path_binary": os.path.join(output_dir, "binary/"),

@@ -36,17 +36,20 @@ DATASET_INFO = False
 NUMBER_TRIALS = 20
 NUMBER_EPOCHS = 40
 DEFAULT_MODEL_INDEX = 4
+NUMBER_CPU = 8
 # ==============================================================================
 
 
-"""
-     Eğitim sürecindeki önemli bilgileri (epoch başlangıcı, kayıp değeri, doğruluk vb.) hem bir dosyaya (training.log) 
-     hem de konsola yazdırmak için bir loglama sistemi kurar
-"""
-
-
 def setup_logging(log_file):
+    """
+         Eğitim sürecindeki önemli bilgileri (epoch başlangıcı, kayıp değeri, doğruluk vb.) hem bir dosyaya (training.log)
+         hem de konsola yazdırmak için bir loglama sistemi kurar
+    """
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    logger = logging.getLogger()
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -174,8 +177,11 @@ def run_training_stage(config, trial, task_type):
     val_size = len(train_val_dataset) - train_size
     train_dataset, val_dataset = random_split(train_val_dataset, [train_size, val_size], generator=generator)
 
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"])
+    num_workers = config.get("num_workers", 0)
+    logging.info(f"DataLoader ({task_type}) için {num_workers} adet worker (CPU çekirdeği) kullanılacak.")
+
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=num_workers)
 
     model = TransformerClassifier(model_name=config["model_name"], num_labels=num_labels)
     model.transformer.resize_token_embeddings(len(tokenizer))
@@ -276,7 +282,10 @@ def evaluate_hierarchical(config):
     val_size = len(train_val_dataset) - train_size
     _, val_dataset_orig = random_split(train_val_dataset, [train_size, val_size], generator=generator)
 
-    val_loader_orig = DataLoader(val_dataset_orig, batch_size=config["batch_size"])
+    num_workers = config.get("num_workers", 0)
+    logging.info(f"DataLoader (Hiyerarşik Değerlendirme) için {num_workers} adet worker (CPU çekirdeği) kullanılacak.")
+
+    val_loader_orig = DataLoader(val_dataset_orig, batch_size=config["batch_size"], num_workers=num_workers)
 
     all_preds, all_labels = [], []
     with torch.no_grad():
@@ -351,10 +360,18 @@ def objective(trial, model_name):
     model_short_name = model_name.split('/')[-1]
     output_dir_base = f"{CHECKPOINT_DIR}/{model_short_name}/trial_{trial.number}/"
 
+    try:
+        num_cpus = int(os.environ["SLURM_CPUS_PER_TASK"])
+    except (KeyError, TypeError):
+        num_cpus = NUMBER_CPU
+
+    data_loader_workers = max(0, num_cpus - 1)
+
     config = {
         "data_path": DATA_PATH,
         "model_name": model_name,
         "seed": 42,
+        "num_workers": data_loader_workers,
 
         # Denenecek Hiperparametreler
         "batch_size": trial.suggest_categorical("batch_size", [16, 32]),

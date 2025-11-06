@@ -35,6 +35,7 @@ NUMBER_TRIALS = 20
 COMET_PROJECT_NAME_PREFIX = "experiment-1-flat-10"
 CHECKPOINT_DIR = "checkpoints_v1_10"
 DEFAULT_MODEL_INDEX = 4
+NUMBER_CPU = 8
 # ==============================================================================
 
 
@@ -154,6 +155,14 @@ def objective(trial):
         "seed": 42
     }
 
+    try:
+        num_cpus = int(os.environ["SLURM_CPUS_PER_TASK"])
+    except (KeyError, TypeError):
+        num_cpus = NUMBER_CPU
+
+    data_loader_workers = max(0, num_cpus - 1)
+    config["num_workers"] = data_loader_workers  # Config'e ekle
+
     # Model adına göre dinamik çıktı klasörü oluştur
     model_short_name = config["model_name"].split('/')[-1]
 
@@ -189,10 +198,12 @@ def objective(trial):
     logging.info(f"Parametreler: {json.dumps(trial.params, indent=4)}")
     logging.info(f"Cihaz seçildi: {device}")
     logging.info(f"Kullanılan Model: {config['model_name']}")
+    logging.info(f"DataLoader için {data_loader_workers} adet worker (CPU çekirdeği) kullanılacak.")
 
     experiment.log_parameters(trial.params)
     experiment.log_parameter("model_name", config["model_name"])
     experiment.log_parameter("seed", config["seed"])
+    experiment.log_parameter("num_workers", data_loader_workers)
 
     # Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
@@ -231,9 +242,9 @@ def objective(trial):
     )
 
 
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"])
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"])
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=config["num_workers"])
+    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=config["num_workers"])
+    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=config["num_workers"])
 
     logging.info(f"Veri seti yüklendi. Eğitim: {len(train_dataset)} örnek, Doğrulama: {len(val_dataset)} örnek.")
 
