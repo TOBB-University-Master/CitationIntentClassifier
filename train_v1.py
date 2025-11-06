@@ -30,10 +30,11 @@ MODELS = [
 ]
 
 DATA_PATH = "data/data_v2.csv"
-NUMBER_EPOCHS = 10
-NUMBER_TRIALS = 4
-COMET_PROJECT_NAME_PREFIX = "experiment-1-flat-01"
-CHECKPOINT_DIR = "checkpoints_v1_02"
+NUMBER_EPOCHS = 40
+NUMBER_TRIALS = 20
+COMET_PROJECT_NAME_PREFIX = "experiment-1-flat-10"
+CHECKPOINT_DIR = "checkpoints_v1_10"
+DEFAULT_MODEL_INDEX = 4
 # ==============================================================================
 
 
@@ -135,13 +136,14 @@ def evaluate(model, data_loader, device, label_names,criterion):
     avg_val_loss = total_val_loss / len(data_loader)
     val_macro_f1 = report_dict['macro avg']['f1-score']
 
-    return intent_acc, intent_report, avg_val_loss, val_macro_f1
+    return intent_acc, intent_report_str, avg_val_loss, val_macro_f1
 
+
+def objective(trial):
     """
         Args:
             section_embed_dim (int): Tahmin edilecek section için embedding uzunluğu eklenmiştir
     """
-def objective(trial):
     config = {
         "data_path": DATA_PATH,
         "model_name": MODEL_NAME,
@@ -154,7 +156,6 @@ def objective(trial):
 
     # Model adına göre dinamik çıktı klasörü oluştur
     model_short_name = config["model_name"].split('/')[-1]
-
 
     experiment = Experiment(
         api_key="LrkBSXNSdBGwikgVrzE2m73iw",
@@ -266,9 +267,6 @@ def objective(trial):
     best_val_f1 = 0.0
     if os.path.exists(config["checkpoint_path"]):
         checkpoint = torch.load(config["checkpoint_path"], map_location=device)
-        # DİKKAT: Eğer önceki checkpoint eski model yapısından (iki çıktı) ise,
-        # bu model.load_state_dict() çağrısı hata verebilir.
-        # Bu durumda eski checkpoint dosyasını silip yeni eğitime başlamanız gerekebilir.
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         lr_scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
@@ -380,7 +378,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Transformer Modeli Eğitimi için Hiperparametre Optimizasyonu")
     parser.add_argument('--model_index',
                         type=int,
-                        default=0,
+                        default=DEFAULT_MODEL_INDEX,
                         help=f'Eğitilecek modelin MODELS listesindeki indeksi (0-{len(MODELS) - 1} arası).')
     args = parser.parse_args()
     model_index = args.model_index

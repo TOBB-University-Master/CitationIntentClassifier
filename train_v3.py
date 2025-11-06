@@ -29,21 +29,18 @@ MODEL_NAMES = [
 DATA_PATH = "data/data_v3.csv"
 DATA_OUTPUT_PATH = "checkpoints_v3_trials/"
 DATASET_INFO = False
-NUMBER_TRIALS = 10
+NUMBER_TRIALS = 20
+NUMBER_EPOCHS = 50
 DEFAULT_MODEL_INDEX = 4
 # -----------------------------------------------------
 
 
-"""
-     Eğitim sürecindeki önemli bilgileri (epoch başlangıcı, kayıp değeri, doğruluk vb.) hem bir dosyaya (training.log) 
-     hem de konsola yazdırmak için bir loglama sistemi kurar
-"""
-
-
 def setup_logging(log_file):
+    """
+         Eğitim sürecindeki önemli bilgileri (epoch başlangıcı, kayıp değeri, doğruluk vb.) hem bir dosyaya (training.log)
+         hem de konsola yazdırmak için bir loglama sistemi kurar
+    """
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    # Optuna'nın kendi loglamasıyla çakışmaması için
-    # logger'ı her seferinde sıfırdan kur.
     logger = logging.getLogger()
     if logger.hasHandlers():
         logger.handlers.clear()
@@ -75,7 +72,25 @@ def evaluate(model, data_loader, device, label_names):
 
     acc = accuracy_score(all_labels, all_preds)
     report = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0)
-    return acc, report
+
+    report_str = classification_report(
+        all_labels,
+        all_preds,
+        target_names=label_names,
+        zero_division=0,
+        output_dict=False
+    )
+    report_dict = classification_report(
+        all_labels,
+        all_preds,
+        target_names=label_names,
+        zero_division=0,
+        output_dict=True
+    )
+
+    val_macro_f1 = report_dict['macro avg']['f1-score']
+
+    return acc, report_str, val_macro_f1
 
 
 def display_samples(loader_name, data_loader, tokenizer, num_samples=1000):
@@ -191,6 +206,7 @@ def train_top_level_classifier(config):
 
     start_epoch = 0
     best_val_acc = 0.0
+    best_val_f1 = 0.0
     if os.path.exists(config["resume_checkpoint_path_binary"]):
         checkpoint = torch.load(config["resume_checkpoint_path_binary"], map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -226,24 +242,30 @@ def train_top_level_classifier(config):
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": lr_scheduler.state_dict(),
-            "best_val_acc": best_val_acc
+            "best_val_acc": best_val_acc,
+            "best_val_f1": best_val_f1
         }
         torch.save(checkpoint_data, config["resume_checkpoint_path_binary"])
 
-        val_acc, val_report = evaluate(model, val_loader, device, label_names_list)
-        logging.info(f"\nEpoch {epoch + 1} - Doğrulama Başarımı: {val_acc:.4f}\n{val_report}")
+        val_acc, val_report, val_macro_f1 = evaluate(model, val_loader, device, label_names_list)
+        logging.info(f"\nEpoch {epoch + 1} - Doğrulama Başarımı (Acc): {val_acc:.4f}")
+        logging.info(f"Epoch {epoch + 1} - Doğrulama Başarımı (Macro F1): {val_macro_f1:.4f}\n{val_report}")
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            logging.info(f"🚀 Yeni en iyi ikili model kaydediliyor: {best_val_acc:.4f}")
+            logging.info(f"🚀 Yeni en iyi ikili accuracy: {best_val_acc:.4f}")
+
+        if val_macro_f1 > best_val_f1:
+            best_val_f1 = val_macro_f1
+            logging.info(f"🚀 Yeni en iyi ikili model (Macro F1) kaydediliyor: {best_val_f1:.4f}")
             torch.save(model.state_dict(), config["best_model_path_binary"])
 
     logging.info("\n--- İkili Model Test Süreci ---")
     model.load_state_dict(torch.load(config['best_model_path_binary']))
-    test_acc, test_report = evaluate(model, test_loader, device, label_names_list)
-    logging.info(f"\n--- İKİLİ TEST SONUÇLARI ---\nTest Başarımı: {test_acc:.4f}\n{test_report}")
+    test_acc, test_report, test_macro_f1 = evaluate(model, test_loader, device, label_names_list)
+    logging.info(f"\n--- İKİLİ TEST SONUÇLARI ---\nTest Başarımı (Acc): {test_acc:.4f}\nTest Başarımı (Macro F1): {test_macro_f1:.4f}\n{test_report}")
 
-    return best_val_acc
+    return best_val_f1
 
 
 # TODO: Uzman Sınıflandırıcı Eğitimi
@@ -336,6 +358,7 @@ def train_expert_classifier(config):
 
     start_epoch = 0
     best_val_acc = 0.0
+    best_val_f1 = 0.0
     if os.path.exists(config["resume_checkpoint_path_multiclass"]):
         checkpoint = torch.load(config["resume_checkpoint_path_multiclass"], map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -343,6 +366,7 @@ def train_expert_classifier(config):
         lr_scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         best_val_acc = checkpoint.get("best_val_acc", 0.0)
+        best_val_f1 = checkpoint.get("best_val_f1", 0.0)
         logging.info(f"Checkpoint bulundu, eğitime {start_epoch}. epoch'tan devam ediliyor.")
     else:
         logging.info("Yeni bir eğitim başlatılıyor, checkpoint bulunamadı.")
@@ -371,24 +395,31 @@ def train_expert_classifier(config):
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": lr_scheduler.state_dict(),
-            "best_val_acc": best_val_acc
+            "best_val_acc": best_val_acc,
+            "best_val_f1": best_val_f1
         }
         torch.save(checkpoint_data, config["resume_checkpoint_path_multiclass"])
 
-        val_acc, val_report = evaluate(model, val_loader, device, label_names_list)
-        logging.info(f"\nEpoch {epoch + 1} - Doğrulama Başarımı: {val_acc:.4f}\n{val_report}")
+        val_acc, val_report, val_macro_f1 = evaluate(model, val_loader, device, label_names_list)
+        logging.info(f"\nEpoch {epoch + 1} - Doğrulama Başarımı (Acc): {val_acc:.4f}")
+        logging.info(f"Epoch {epoch + 1} - Doğrulama Başarımı (Macro F1): {val_macro_f1:.4f}\n{val_report}")
+
+        # Koşulu F1'e göre güncelle
+        if val_macro_f1 > best_val_f1:
+            best_val_f1 = val_macro_f1
+            logging.info(f"🚀 Yeni en iyi uzman model (Macro F1) kaydediliyor: {best_val_f1:.4f}")
+            torch.save(model.state_dict(), config["best_model_path_multiclass"])
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            logging.info(f"🚀 Yeni en iyi uzman model kaydediliyor: {best_val_acc:.4f}")
-            torch.save(model.state_dict(), config["best_model_path_multiclass"])
+            logging.info(f"⭐ Yeni en iyi uzman (Accuracy): {best_val_acc:.4f} (Not: Model F1'e göre kaydedilir)")
 
     logging.info("\n--- Uzman Model Test Süreci ---")
     model.load_state_dict(torch.load(config['best_model_path_multiclass']))
-    test_acc, test_report = evaluate(model, test_loader, device, label_names_list)
-    logging.info(f"\n--- UZMAN TEST SONUÇLARI ---\nTest Başarımı: {test_acc:.4f}\n{test_report}")
+    test_acc, test_report, test_macro_f1 = evaluate(model, test_loader, device, label_names_list)
+    logging.info(f"\n--- UZMAN TEST SONUÇLARI ---\nTest Başarımı (Acc): {test_acc:.4f}\nTest Başarımı (Macro F1): {test_macro_f1:.4f}\n{test_report}")
 
-    return best_val_acc
+    return best_val_f1
 
 
 def objective(trial, model_name):
@@ -401,7 +432,7 @@ def objective(trial, model_name):
     # --- Hiperparametreleri Belirle ---
     lr = trial.suggest_float("lr", 1e-5, 5e-5, log=True)
     batch_size = trial.suggest_categorical("batch_size", [16, 32])
-    epochs = trial.suggest_int("epochs", 6, 30)
+    epochs = NUMBER_EPOCHS
 
     # --- Config Dosyasını Oluştur ---
     model_short_name = model_name.split('/')[-1]
@@ -438,8 +469,8 @@ def objective(trial, model_name):
         logging.info(f"\n--- DENEME {trial.number} BAŞLATILIYOR ({model_name}) ---")
         logging.info(f"Parametreler: {trial.params}")
 
-        best_binary_val_acc = train_top_level_classifier(config)
-        best_multiclass_val_acc = train_expert_classifier(config)
+        best_binary_val_f1 = train_top_level_classifier(config)
+        best_multiclass_val_f1 = train_expert_classifier(config)
 
         setup_logging(trial_log_file)
         logging.info(f"\nDENEME {trial.number} tamamlandı. Ortak yapılandırma dosyaları kaydediliyor...")
@@ -457,10 +488,9 @@ def objective(trial, model_name):
             json.dump(config, f, indent=4, ensure_ascii=False)
         logging.info(f"Yapılandırma dosyası şuraya kaydedildi: {config_path}")
 
-        logging.info(
-            f"DENEME {trial.number} Sonuç: Binary Val Acc: {best_binary_val_acc:.4f}, Multiclass Val Acc: {best_multiclass_val_acc:.4f}")
+        logging.info(f"DENEME {trial.number} Sonuç: Binary Val F1: {best_binary_val_f1:.4f}, Multiclass Val F1: {best_multiclass_val_f1:.4f}")
 
-        return best_multiclass_val_acc
+        return best_multiclass_val_f1
 
     except Exception as e:
         try:
@@ -561,7 +591,7 @@ def main():
 
             print(f"\n--- {model_name} İÇİN OPTİMİZASYON TAMAMLANDI ---")
             print(f"En iyi deneme (Best trial): {study.best_trial.number}")
-            print(f"En iyi değer (Best value - Uzman Model Val Acc): {study.best_value:.4f}")
+            print(f"En iyi değer (Best value - Uzman Model Macro F1): {study.best_value:.4f}")
             print("En iyi parametreler (Best params):")
             for key, value in study.best_params.items():
                 print(f"    {key}: {value}")
