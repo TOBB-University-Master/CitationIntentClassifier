@@ -17,6 +17,7 @@ import json
 import pickle
 import optuna
 from comet_ml import Experiment
+from comet_ml import OfflineExperiment
 
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
@@ -30,11 +31,12 @@ MODELS = [
 ]
 
 DATA_PATH = "data/data_v2.csv"
-NUMBER_EPOCHS = 40
 NUMBER_TRIALS = 20
-COMET_PROJECT_NAME_PREFIX = "experiment-1-flat-10"
-CHECKPOINT_DIR = "checkpoints_v1_10"
-DEFAULT_MODEL_INDEX = 4
+NUMBER_EPOCHS = 50
+COMET_PROJECT_NAME_PREFIX = "experiment-1-flat"
+COMET_ONLINE_MODE = False
+CHECKPOINT_DIR = "checkpoints_v1"
+DEFAULT_MODEL_INDEX = 0
 NUMBER_CPU = 8
 # ==============================================================================
 
@@ -166,18 +168,34 @@ def objective(trial):
     # Model adına göre dinamik çıktı klasörü oluştur
     model_short_name = config["model_name"].split('/')[-1]
 
-    experiment = Experiment(
-        api_key="LrkBSXNSdBGwikgVrzE2m73iw",
-        project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
-        workspace="kemalsami",
-        auto_log_co2=False,
-        auto_output_logging=None
-    )
-    experiment.set_name(f"trial_{trial.number}")
-    experiment.add_tag(model_short_name)
-
     output_dir = f"{CHECKPOINT_DIR}/{model_short_name}/trial_{trial.number}/"
     os.makedirs(output_dir, exist_ok=True)
+
+    comet_log_dir = os.path.join(output_dir, "comet_offline_logs")
+    os.makedirs(comet_log_dir, exist_ok=True)
+
+    if COMET_ONLINE_MODE:
+        experiment = Experiment(
+            api_key="LrkBSXNSdBGwikgVrzE2m73iw",
+            project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
+            workspace="kemalsami",
+            auto_log_co2=False,
+            auto_output_logging=None
+        )
+        logging.info("Comet ML ÇEVRİMDIŞI (OFFLINE) modda başlatıldı. Deneyler local'e kaydedilecek.")
+    else:
+        experiment = OfflineExperiment(
+            project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
+            workspace="kemalsami",
+            log_dir=comet_log_dir,
+            auto_log_co2=False,
+            auto_output_logging=None
+        )
+        logging.info(f"Comet ML ÇEVRİMDIŞI (OfflineExperiment) modda başlatıldı. Loglar: {comet_log_dir}")
+        logging.info("Comet ML ÇEVRİMİÇİ (ONLINE) modda başlatıldı.")
+
+    experiment.set_name(f"trial_{trial.number}")
+    experiment.add_tag(model_short_name)
 
     # Dinamik dosya yolları
     config["checkpoint_path"] = os.path.join(output_dir, "checkpoint.pt")

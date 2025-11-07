@@ -10,7 +10,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=20
 #SBATCH --time=1-00:00:00
 #SBATCH --account=kkaraca
 #SBATCH --array=0-4
@@ -24,6 +24,13 @@ echo "-------------------------------------------------"
 
 module purge
 module load apps/truba-ai/gpu-2024.0
+
+echo "Sanal ortam etkinleştiriliyor..."
+source ~/atif-ulakbim/bin/activate
+echo "-------------------------------------------------"
+
+echo "Ortam yüklendi, Python betiği başlatılıyor..."
+echo "-------------------------------------------------"
 
 echo "Ortam yüklendi, Python betiği başlatılıyor..."
 echo "-------------------------------------------------"

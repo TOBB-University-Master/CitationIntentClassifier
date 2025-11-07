@@ -122,12 +122,12 @@ class CitationDataset(Dataset):
         row = self.df.iloc[idx]
         label_id = row['label_id']
         section_id = row['section_id']
+        text_context = str(row['citation_context'])
 
         # Eğer parametre True ise, bölüm başlığını ve metin içeriğini ayrı ayrı alıp tokenizer'a çift girdi olarak verilir
         # [CLS] section_title [SEP] citation_context [SEP]
         if self.include_section_in_input:
             section_title = str(row['section'])
-            text_context = str(row['citation_context'])
             encoding = self.tokenizer(
                 text=section_title,
                 text_pair=text_context,
@@ -140,7 +140,6 @@ class CitationDataset(Dataset):
         # Eğer parametre False ise sadece metin içeriğini tokenizer'a girdi olarak verilir
         # [CLS] citation_context [SEP]
         else:
-            text_context = str(row['citation_context'])
             encoding = self.tokenizer(
                 text = text_context,
                 padding="max_length",
@@ -153,7 +152,8 @@ class CitationDataset(Dataset):
             "input_ids": encoding["input_ids"].squeeze(0),
             "attention_mask": encoding["attention_mask"].squeeze(0),
             "label": torch.tensor(label_id, dtype=torch.long),
-            "section_id": torch.tensor(section_id, dtype=torch.long)
+            "section_id": torch.tensor(section_id, dtype=torch.long),
+            "raw_text": text_context
         }
 
     def get_label_names(self):
