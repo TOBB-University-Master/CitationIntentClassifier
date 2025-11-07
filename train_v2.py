@@ -17,6 +17,8 @@ from dataset import CitationDataset
 from generic_model import TransformerClassifier
 from tqdm import tqdm
 from functools import partial
+from comet_ml import Experiment
+from comet_ml import OfflineExperiment
 
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
@@ -30,13 +32,15 @@ MODEL_NAMES = [
 ]
 
 DATA_PATH = "data/data_v2.csv"
-CHECKPOINT_DIR = "checkpoints_v2_01"
 
+CHECKPOINT_DIR = "checkpoints_v2"
+COMET_PROJECT_NAME_PREFIX = "experiment-2-hierarchical"
+COMET_ONLINE_MODE = True
 DATASET_INFO = False
 NUMBER_TRIALS = 20
-NUMBER_EPOCHS = 40
-DEFAULT_MODEL_INDEX = 4
-NUMBER_CPU = 8
+NUMBER_EPOCHS = 50
+DEFAULT_MODEL_INDEX = 0
+NUMBER_CPU = 4
 # ==============================================================================
 
 
@@ -60,9 +64,10 @@ def setup_logging(log_file):
     )
 
 
-def evaluate(model, data_loader, device, label_names):
+def evaluate(model, data_loader, device, label_names, criterion):
     model.eval()
     all_preds, all_labels = [], []
+    total_val_loss = 0
     with torch.no_grad():
         for batch in data_loader:
             input_ids = batch["input_ids"].to(device)
@@ -71,6 +76,9 @@ def evaluate(model, data_loader, device, label_names):
 
             logits = model(input_ids, attention_mask)
             preds = torch.argmax(logits, dim=1)
+
+            loss = criterion(logits, labels)
+            total_val_loss += loss.item()
 
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
@@ -93,8 +101,9 @@ def evaluate(model, data_loader, device, label_names):
     )
 
     val_macro_f1 = report_dict['macro avg']['f1-score']
+    avg_val_loss = total_val_loss / len(data_loader)
 
-    return acc, report_str, val_macro_f1
+    return acc, report_str, val_macro_f1, avg_val_loss
 
 
 def display_samples(loader_name, data_loader, tokenizer, num_samples=1000):
@@ -128,7 +137,7 @@ def display_samples(loader_name, data_loader, tokenizer, num_samples=1000):
     print("-" * (len(loader_name) + 25))
 
 
-def run_training_stage(config, trial, task_type):
+def run_training_stage(config, trial, task_type, experiment):
     """
     Belirtilen görev için (binary veya multiclass) bir eğitim aşamasını çalıştırır.
     """
@@ -212,10 +221,20 @@ def run_training_stage(config, trial, task_type):
             total_loss += loss.item()
 
         # Değerlendirme 3 değer döndürüyor
-        val_acc, val_report_str, val_macro_f1 = evaluate(model, val_loader, device, label_names_list)
+        val_acc, val_report_str, val_macro_f1, avg_val_loss = evaluate(model, val_loader, device, label_names_list, criterion)
+
         logging.info(f"Epoch {epoch + 1} - {task_type} Doğrulama Başarımı (Accuracy): {val_acc:.4f}")
         logging.info(f"Epoch {epoch + 1} - {task_type} Doğrulama Başarımı (Macro F1): {val_macro_f1:.4f}")
+        logging.info(f"Epoch {epoch + 1} - {task_type} Doğrulama Kaybı (Loss): {avg_val_loss:.4f}")
 
+        avg_train_loss = total_loss / len(train_loader)
+        metrics_dict = {
+            f"{task_type}_train_loss": avg_train_loss,
+            f"{task_type}_validation_loss": avg_val_loss,
+            f"{task_type}_validation_accuracy": val_acc,
+            f"{task_type}_validation_macro_f1": val_macro_f1
+        }
+        experiment.log_metrics(metrics_dict, step=epoch + 1)
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
@@ -226,10 +245,13 @@ def run_training_stage(config, trial, task_type):
             logging.info(f"🚀 Yeni en iyi F1 {task_type} model (Macro F1: {best_val_f1:.4f}) kaydediliyor...")
             torch.save(model.state_dict(), best_model_path)
 
+            experiment.log_text(f"epoch_{epoch + 1}_best_report_{task_type}.txt", val_report_str)
+            experiment.log_metric(f"best_validation_macro_f1_{task_type}", best_val_f1, step=epoch + 1)
+
     logging.info(f"--- {task_type} Sınıflandırıcı Eğitimi Tamamlandı ---")
 
 
-def evaluate_hierarchical(config):
+def evaluate_hierarchical(config, experiment):
     """
     Eğitilmiş ikili ve uzman modellerle hiyerarşik birleşik performansı ölçer.
     """
@@ -352,6 +374,10 @@ def evaluate_hierarchical(config):
     logging.info(f"🏆 Birleşik Hiyerarşik Doğrulama Başarımı (Macro F1): {overall_macro_f1:.4f}")
     logging.info(f"Birleşik Sınıflandırma Raporu:\n{report_str}")
 
+    experiment.log_metric("combined_hierarchical_accuracy", overall_accuracy)
+    experiment.log_metric("combined_hierarchical_macro_f1", overall_macro_f1)
+    experiment.log_text("combined_hierarchical_report.txt", report_str)
+
     # Optuna'ya F1 skorunu döndür
     return overall_macro_f1
 
@@ -396,14 +422,39 @@ def objective(trial, model_name):
     os.makedirs(config["checkpoint_path_binary"], exist_ok=True)
     os.makedirs(config["checkpoint_path_multiclass"], exist_ok=True)
 
+    if COMET_ONLINE_MODE:
+        experiment = Experiment(
+            api_key="LrkBSXNSdBGwikgVrzE2m73iw",
+            project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
+            workspace="kemalsami",
+            auto_log_co2=False,
+            auto_output_logging=None
+        )
+    else:
+        experiment = OfflineExperiment(
+            project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
+            workspace="kemalsami",
+            auto_log_co2=False,
+            auto_output_logging=None
+        )
+
+    experiment.set_name(f"trial_{trial.number}")
+    experiment.add_tag(model_short_name)
+
+    # Parametreleri logla
+    experiment.log_parameters(trial.params)
+    experiment.log_parameter("model_name", config["model_name"])
+    experiment.log_parameter("seed", config["seed"])
+    experiment.log_parameter("num_workers", data_loader_workers)
+
     # 1. Aşama: İkili Modeli Eğit
-    run_training_stage(config, trial, 'binary')
+    run_training_stage(config, trial, 'binary' , experiment)
 
     # 2. Aşama: Uzman Modeli Eğit
-    run_training_stage(config, trial, 'multiclass')
+    run_training_stage(config, trial, 'multiclass' , experiment)
 
     # 3. Aşama: İki modelin ortak performansını ölç
-    overall_macro_f1 = evaluate_hierarchical(config)
+    overall_macro_f1 = evaluate_hierarchical(config , experiment)
 
     logging.info(f"Deneme #{trial.number} tamamlandı. Tokenizer ve yapılandırma kaydediliyor...")
 
@@ -416,6 +467,8 @@ def objective(trial, model_name):
     config_path = os.path.join(output_dir_base, "trial_config.json")
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=4, ensure_ascii=False)
+
+    experiment.end()
 
     # Optuna'ya optimize edeceği değeri döndür
     return overall_macro_f1

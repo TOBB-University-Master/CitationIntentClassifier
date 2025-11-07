@@ -2,6 +2,7 @@
 *.db
 *.log
 .idea/
+.cometml-runs/
 output/
 checkpoints*/
 __pycache__/

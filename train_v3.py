@@ -5,7 +5,7 @@ import os
 import logging
 import pickle
 import json
-import optuna  # Hyperparameter optimizasyonu için
+import optuna
 from functools import partial
 
 from torch import Generator
@@ -17,6 +17,10 @@ from collections import Counter
 from dataset import CitationDataset
 from generic_model import TransformerClassifier
 from tqdm import tqdm
+from comet_ml import Experiment
+from comet_ml import OfflineExperiment
+
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # -----------------------------------------------------
 MODEL_NAMES = [
@@ -26,12 +30,16 @@ MODEL_NAMES = [
     "microsoft/deberta-v3-base",
     "answerdotai/ModernBERT-base"
 ]
+
+COMET_PROJECT_NAME_PREFIX = "experiment-3-rich"
+COMET_ONLINE_MODE = True
 DATA_PATH = "data/data_v3.csv"
-DATA_OUTPUT_PATH = "checkpoints_v3_trials/"
+DATA_OUTPUT_PATH = "checkpoints_v3"
 DATASET_INFO = False
 NUMBER_TRIALS = 20
 NUMBER_EPOCHS = 50
-DEFAULT_MODEL_INDEX = 4
+DEFAULT_MODEL_INDEX = 0
+NUMBER_CPU = 4
 # -----------------------------------------------------
 
 
@@ -55,9 +63,10 @@ def setup_logging(log_file):
     )
 
 
-def evaluate(model, data_loader, device, label_names):
+def evaluate(model, data_loader, device, label_names, criterion):
     model.eval()
     all_preds, all_labels = [], []
+    total_val_loss = 0
     with torch.no_grad():
         for batch in data_loader:
             input_ids = batch["input_ids"].to(device)
@@ -66,6 +75,9 @@ def evaluate(model, data_loader, device, label_names):
 
             logits = model(input_ids, attention_mask)
             preds = torch.argmax(logits, dim=1)
+
+            loss = criterion(logits, labels)
+            total_val_loss += loss.item()
 
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
@@ -90,7 +102,9 @@ def evaluate(model, data_loader, device, label_names):
 
     val_macro_f1 = report_dict['macro avg']['f1-score']
 
-    return acc, report_str, val_macro_f1
+    avg_val_loss = total_val_loss / len(data_loader)
+
+    return acc, report_str, val_macro_f1, avg_val_loss
 
 
 def display_samples(loader_name, data_loader, tokenizer, num_samples=1000):
@@ -119,7 +133,7 @@ def display_samples(loader_name, data_loader, tokenizer, num_samples=1000):
 
 
 # TODO: Üst Seviye Sınıflandırıcı Eğitimi
-def train_top_level_classifier(config):
+def train_top_level_classifier(config, experiment):
     """
     Modeli 'Background' vs 'Non-Background' olarak ikili sınıflandırma için eğitir.
     En iyi doğrulama başarımını (best_val_acc) döndürür.
@@ -251,29 +265,53 @@ def train_top_level_classifier(config):
         }
         torch.save(checkpoint_data, config["resume_checkpoint_path_binary"])
 
-        val_acc, val_report, val_macro_f1 = evaluate(model, val_loader, device, label_names_list)
-        logging.info(f"\nEpoch {epoch + 1} - Doğrulama Başarımı (Acc): {val_acc:.4f}")
+        val_acc, val_report, val_macro_f1, avg_val_loss = evaluate(model, val_loader, device, label_names_list, criterion)
+        avg_train_loss = total_loss / len(train_loader)  # Ortalama eğitim kaybını hesapla
+
+        logging.info(f"\nEpoch {epoch + 1} - Train Loss: {avg_train_loss:.4f}")
+        logging.info(f"Epoch {epoch + 1} - Val Loss: {avg_val_loss:.4f}")
+        logging.info(f"Epoch {epoch + 1} - Doğrulama Başarımı (Acc): {val_acc:.4f}")
         logging.info(f"Epoch {epoch + 1} - Doğrulama Başarımı (Macro F1): {val_macro_f1:.4f}\n{val_report}")
+
+        metrics_dict = {
+            "binary_train_loss": avg_train_loss,
+            "binary_validation_loss": avg_val_loss,
+            "binary_validation_accuracy": val_acc,
+            "binary_validation_macro_f1": val_macro_f1
+        }
+        experiment.log_metrics(metrics_dict, step=epoch + 1)
 
         if val_macro_f1 > best_val_f1:
             best_val_f1 = val_macro_f1
             logging.info(f"🚀 Yeni en iyi ikili model (Macro F1) kaydediliyor: {best_val_f1:.4f}")
             torch.save(model.state_dict(), config["best_model_path_binary"])
 
+            experiment.log_text(f"epoch_{epoch + 1}_best_report_binary.txt", val_report)
+            experiment.log_metric("best_validation_macro_f1_binary", best_val_f1, step=epoch + 1)
+
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             logging.info(f"🚀 Yeni en iyi uzman (Accuracy): {best_val_acc:.4f} (Not: Model F1'e göre kaydedilir)")
 
+    return best_val_f1
+
+# TODO: Test Süreci Çıkartılmalı mı
+"""
     logging.info("\n--- İkili Model Test Süreci ---")
     model.load_state_dict(torch.load(config['best_model_path_binary']))
-    test_acc, test_report, test_macro_f1 = evaluate(model, test_loader, device, label_names_list)
+
+    test_acc, test_report, test_macro_f1, test_loss = evaluate(model, test_loader, device, label_names_list, criterion)
     logging.info(f"\n--- İKİLİ TEST SONUÇLARI ---\nTest Başarımı (Acc): {test_acc:.4f}\nTest Başarımı (Macro F1): {test_macro_f1:.4f}\n{test_report}")
 
-    return best_val_f1
+    experiment.log_metric("test_accuracy_binary", test_acc)
+    experiment.log_metric("test_macro_f1_binary", test_macro_f1)
+    experiment.log_metric("test_loss_binary", test_loss)
+    experiment.log_text("test_report_binary.txt", test_report)
+"""
 
 
 # TODO: Uzman Sınıflandırıcı Eğitimi
-def train_expert_classifier(config):
+def train_expert_classifier(config, experiment):
     """
     Modeli 'Non-Background' olan 4 sınıf üzerinde eğitir.
     En iyi doğrulama başarımını (best_val_acc) döndürür.
@@ -407,9 +445,24 @@ def train_expert_classifier(config):
         }
         torch.save(checkpoint_data, config["resume_checkpoint_path_multiclass"])
 
-        val_acc, val_report, val_macro_f1 = evaluate(model, val_loader, device, label_names_list)
-        logging.info(f"\nEpoch {epoch + 1} - Doğrulama Başarımı (Acc): {val_acc:.4f}")
+        val_acc, val_report, val_macro_f1, avg_val_loss = evaluate(model, val_loader, device, label_names_list,
+                                                                   criterion)
+
+        avg_train_loss = total_loss / len(train_loader)  # Ortalama eğitim kaybını hesapla
+
+        logging.info(f"\nEpoch {epoch + 1} - Train Loss: {avg_train_loss:.4f}")
+        logging.info(f"Epoch {epoch + 1} - Val Loss: {avg_val_loss:.4f}")  # <-- Yeni log
+        logging.info(f"Epoch {epoch + 1} - Doğrulama Başarımı (Acc): {val_acc:.4f}")
         logging.info(f"Epoch {epoch + 1} - Doğrulama Başarımı (Macro F1): {val_macro_f1:.4f}\n{val_report}")
+
+        # Comet'e epoch bazlı metrikleri logla
+        metrics_dict = {
+            "multiclass_train_loss": avg_train_loss,
+            "multiclass_validation_loss": avg_val_loss,
+            "multiclass_validation_accuracy": val_acc,
+            "multiclass_validation_macro_f1": val_macro_f1
+        }
+        experiment.log_metrics(metrics_dict, step=epoch + 1)
 
         # Koşulu F1'e göre güncelle
         if val_macro_f1 > best_val_f1:
@@ -417,14 +470,12 @@ def train_expert_classifier(config):
             logging.info(f"🚀 Yeni en iyi uzman model (Macro F1) kaydediliyor: {best_val_f1:.4f}")
             torch.save(model.state_dict(), config["best_model_path_multiclass"])
 
+            experiment.log_text(f"epoch_{epoch + 1}_best_report_multiclass.txt", val_report)
+            experiment.log_metric("best_validation_macro_f1_multiclass", best_val_f1, step=epoch + 1)
+
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            logging.info(f"⭐ Yeni en iyi uzman (Accuracy): {best_val_acc:.4f} (Not: Model F1'e göre kaydedilir)")
-
-    logging.info("\n--- Uzman Model Test Süreci ---")
-    model.load_state_dict(torch.load(config['best_model_path_multiclass']))
-    test_acc, test_report, test_macro_f1 = evaluate(model, test_loader, device, label_names_list)
-    logging.info(f"\n--- UZMAN TEST SONUÇLARI ---\nTest Başarımı (Acc): {test_acc:.4f}\nTest Başarımı (Macro F1): {test_macro_f1:.4f}\n{test_report}")
+            logging.info(f"🚀 Yeni en iyi uzman (Accuracy): {best_val_acc:.4f} (Not: Model F1'e göre kaydedilir)")
 
     return best_val_f1
 
@@ -444,13 +495,14 @@ def objective(trial, model_name):
     try:
         num_cpus = int(os.environ["SLURM_CPUS_PER_TASK"])
     except (KeyError, TypeError):
-        num_cpus = 4
+        num_cpus = NUMBER_CPU
 
     data_loader_workers = max(0, num_cpus - 1)
 
     # --- Config Dosyasını Oluştur ---
     model_short_name = model_name.split('/')[-1]
-    output_dir = os.path.join(DATA_OUTPUT_PATH, f"trial_{trial.number}_{model_short_name}/")
+    # output_dir = os.path.join(DATA_OUTPUT_PATH, f"trial_{trial.number}_{model_short_name}/")
+    output_dir = f"{DATA_OUTPUT_PATH}/{model_short_name}/trial_{trial.number}/"
 
     config = {
         "batch_size": batch_size,
@@ -477,6 +529,32 @@ def objective(trial, model_name):
     os.makedirs(config["checkpoint_path_binary"], exist_ok=True)
     os.makedirs(config["checkpoint_path_multiclass"], exist_ok=True)
 
+
+    if COMET_ONLINE_MODE:
+        experiment = Experiment(
+            api_key="LrkBSXNSdBGwikgVrzE2m73iw",
+            project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
+            workspace="kemalsami",
+            auto_log_co2=False,
+            auto_output_logging=None
+        )
+    else:
+        experiment = OfflineExperiment(
+            project_name=f"{COMET_PROJECT_NAME_PREFIX}-{model_short_name}-study",
+            workspace="kemalsami",
+            auto_log_co2=False,
+            auto_output_logging=None
+        )
+
+    experiment.set_name(f"trial_{trial.number}")
+    experiment.add_tag(model_short_name)
+
+    # Parametreleri logla
+    experiment.log_parameters(trial.params)
+    experiment.log_parameter("model_name", config["model_name"])
+    experiment.log_parameter("seed", config["seed"])
+    experiment.log_parameter("num_workers", config["num_workers"])
+
     try:
         trial_log_file = os.path.join(output_dir, "trial_summary.log")
         setup_logging(trial_log_file)
@@ -484,8 +562,8 @@ def objective(trial, model_name):
         logging.info(f"\n--- DENEME {trial.number} BAŞLATILIYOR ({model_name}) ---")
         logging.info(f"Parametreler: {trial.params}")
 
-        best_binary_val_f1 = train_top_level_classifier(config)
-        best_multiclass_val_f1 = train_expert_classifier(config)
+        best_binary_val_f1 = train_top_level_classifier(config, experiment)
+        best_multiclass_val_f1 = train_expert_classifier(config, experiment)
 
         setup_logging(trial_log_file)
         logging.info(f"\nDENEME {trial.number} tamamlandı. Ortak yapılandırma dosyaları kaydediliyor...")
@@ -505,6 +583,10 @@ def objective(trial, model_name):
 
         logging.info(f"DENEME {trial.number} Sonuç: Binary Val F1: {best_binary_val_f1:.4f}, Multiclass Val F1: {best_multiclass_val_f1:.4f}")
 
+        experiment.log_metric("final_binary_val_f1", best_binary_val_f1)
+        experiment.log_metric("final_multiclass_val_f1", best_multiclass_val_f1)
+        experiment.end()
+
         return best_multiclass_val_f1
 
     except Exception as e:
@@ -515,6 +597,10 @@ def objective(trial, model_name):
         except Exception as log_e:
             print(f"DENEME {trial.number} KRİTİK HATA: {e}")
             print(f"Loglama hatası: {log_e}")
+
+        if 'experiment' in locals():
+            experiment.log_text(f"DENEME_{trial.number}_HATA.txt", str(e))
+            experiment.end()
 
         return 0.0  # Başarısız deneme
 
@@ -612,7 +698,9 @@ def main():
                 print(f"    {key}: {value}")
 
             model_short_name = model_name.split('/')[-1]
-            best_trial_dir = os.path.join(DATA_OUTPUT_PATH, f"trial_{study.best_trial.number}_{model_short_name}/")
+            # best_trial_dir = os.path.join(DATA_OUTPUT_PATH, f"trial_{study.best_trial.number}_{model_short_name}/")
+            best_trial_dir = f"{DATA_OUTPUT_PATH}/{model_short_name}/trial_{study.best_trial.number}/"
+
             print(f"\nEn iyi modelin ve logların kaydedildiği klasör: {best_trial_dir}")
 
         except Exception as e:

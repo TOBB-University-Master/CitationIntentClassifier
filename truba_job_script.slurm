@@ -19,6 +19,13 @@
 #                      *** SLURM SETTINGS ***
 # ==============================================================================
 
+## python3 -m venv ~/atif-ulakbim
+## source ~/atif-ulakbim/bin/activate
+## pip install --upgrade pip
+## pip install --upgrade transformers
+## pip install comet-ml
+## deactivate
+
 echo "İş Array ID (Model İndeksi): $SLURM_ARRAY_TASK_ID"
 echo "-------------------------------------------------"
 
