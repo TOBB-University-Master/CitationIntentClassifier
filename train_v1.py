@@ -19,6 +19,8 @@ import optuna
 from comet_ml import Experiment
 from comet_ml import OfflineExperiment
 
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
 # ==============================================================================
@@ -34,7 +36,7 @@ DATA_PATH = "data/data_v2.csv"
 NUMBER_TRIALS = 20
 NUMBER_EPOCHS = 50
 COMET_PROJECT_NAME_PREFIX = "experiment-1-flat"
-COMET_ONLINE_MODE = False
+COMET_ONLINE_MODE = True
 CHECKPOINT_DIR = "checkpoints_v1"
 DEFAULT_MODEL_INDEX = 0
 NUMBER_CPU = 8

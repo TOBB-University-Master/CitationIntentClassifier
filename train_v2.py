@@ -20,6 +20,8 @@ from functools import partial
 from comet_ml import Experiment
 from comet_ml import OfflineExperiment
 
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
 # ==============================================================================
 #                      *** DENEY YAPILANDIRMASI ***
 # ==============================================================================
