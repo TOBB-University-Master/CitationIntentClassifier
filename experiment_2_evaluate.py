@@ -117,7 +117,7 @@ def find_best_trial_by_rerunning_validation(model_name, model_checkpoint_dir, de
             multiclass_model.to(device)
 
             # Doğrulama (Validation) setini yeniden oluştur
-            full_dataset = CitationDataset(tokenizer=tokenizer, csv_path=DATA_PATH, max_len=256, task=None)
+            full_dataset = CitationDataset(tokenizer=tokenizer, csv_path=DATA_PATH, max_len=128, task=None)
             full_label_encoder = full_dataset.label_encoder
             generator = Generator().manual_seed(SEED)
             train_val_size = int(0.8 * len(full_dataset))
@@ -205,7 +205,7 @@ def main():
 
             # 3. Adım: Test setini oluştur
             log_and_print("Orijinal test veri seti yeniden oluşturuluyor...", log_file)
-            full_dataset = CitationDataset(tokenizer=tokenizer, csv_path=DATA_PATH, max_len=256, task=None)
+            full_dataset = CitationDataset(tokenizer=tokenizer, csv_path=DATA_PATH, max_len=128, task=None)
             full_label_encoder = full_dataset.label_encoder
             label_names = full_label_encoder.classes_.tolist()
             generator = Generator().manual_seed(SEED)

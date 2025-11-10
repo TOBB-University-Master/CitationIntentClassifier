@@ -19,6 +19,7 @@
 #                      *** SLURM SETTINGS ***
 # ==============================================================================
 
+## module load apps/truba-ai/gpu-2024.0
 ## python3 -m venv ~/atif-ulakbim
 ## source ~/atif-ulakbim/bin/activate
 ## pip install --upgrade pip

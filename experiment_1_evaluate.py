@@ -135,7 +135,7 @@ def main():
             model.to(device)
 
             log_and_print("Test veri seti yeniden oluşturuluyor...", log_file)
-            full_dataset = CitationDataset(tokenizer=tokenizer, csv_path=DATA_PATH, max_len=256)
+            full_dataset = CitationDataset(tokenizer=tokenizer, csv_path=DATA_PATH, max_len=128)
             generator = Generator().manual_seed(SEED)
             train_val_size = int(0.8 * len(full_dataset))
             test_size = len(full_dataset) - train_val_size

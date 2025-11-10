@@ -91,19 +91,19 @@ Test için 550 örnek yüklendi.
 Test veri seti üzerinde değerlendirme yapılıyor...
 
 --- TEST SONUÇLARI ---
-Accuracy: 0.9618
-Macro F1-Score: 0.8446
+Accuracy: 0.9636
+Macro F1-Score: 0.8534
 Sınıflandırma Raporu:
               precision    recall  f1-score   support
 
   background       0.97      0.99      0.98       420
-       basis       0.97      0.93      0.95        74
-      differ       0.71      0.50      0.59        10
+       basis       0.97      0.95      0.96        74
+      differ       0.83      0.50      0.62        10
      discuss       0.93      0.83      0.88        30
      support       0.78      0.88      0.82        16
 
     accuracy                           0.96       550
-   macro avg       0.87      0.83      0.84       550
+   macro avg       0.90      0.83      0.85       550
 weighted avg       0.96      0.96      0.96       550
 
 
@@ -118,20 +118,20 @@ Test için 550 örnek yüklendi.
 Test veri seti üzerinde değerlendirme yapılıyor...
 
 --- TEST SONUÇLARI ---
-Accuracy: 0.8055
-Macro F1-Score: 0.4748
+Accuracy: 0.8018
+Macro F1-Score: 0.4765
 Sınıflandırma Raporu:
               precision    recall  f1-score   support
 
-  background       0.83      0.97      0.89       420
+  background       0.82      0.96      0.89       420
        basis       0.57      0.31      0.40        74
-      differ       0.67      0.20      0.31        10
-     discuss       0.71      0.17      0.27        30
+      differ       1.00      0.20      0.33        10
+     discuss       0.56      0.17      0.26        30
      support       0.75      0.38      0.50        16
 
-    accuracy                           0.81       550
-   macro avg       0.71      0.40      0.47       550
-weighted avg       0.78      0.81      0.77       550
+    accuracy                           0.80       550
+   macro avg       0.74      0.40      0.48       550
+weighted avg       0.78      0.80      0.77       550
 
 
 Confusion matrix kaydedildi: outputs/experiment_1_1_flat/confusion_matrix_ModernBERT-base.png
@@ -144,8 +144,8 @@ Confusion matrix kaydedildi: outputs/experiment_1_1_flat/confusion_matrix_Modern
                  bert-base-turkish-cased  0.967273  0.902243
 electra-base-turkish-cased-discriminator  0.969091  0.899545
                         xlm-roberta-base  0.945455  0.818103
-                         deberta-v3-base  0.961818  0.844594
-                         ModernBERT-base  0.805455  0.474803
+                         deberta-v3-base  0.963636  0.853383
+                         ModernBERT-base  0.801818  0.476477
 ============================================================
 
 Karşılaştırma grafiği kaydedildi: outputs/experiment_1_1_flat/model_comparison.png
