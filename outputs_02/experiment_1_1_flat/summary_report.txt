@@ -1,0 +1,151 @@
+Kullanılan Cihaz: mps
+
+--------------------------------------------------
+ değerlendiriliyor: dbmdz/bert-base-turkish-cased
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_16 (Validation Accuracy: 0.8485)
+Model ve bileşenler yükleniyor...
+Test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Test veri seti üzerinde değerlendirme yapılıyor...
+
+--- TEST SONUÇLARI ---
+Accuracy: 0.8764
+Macro F1-Score: 0.6872
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.89      0.97      0.93       420
+       basis       0.87      0.65      0.74        74
+      differ       0.75      0.60      0.67        10
+     discuss       0.90      0.30      0.45        30
+     support       0.61      0.69      0.65        16
+
+    accuracy                           0.88       550
+   macro avg       0.80      0.64      0.69       550
+weighted avg       0.88      0.88      0.86       550
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_1_1_flat/confusion_matrix_bert-base-turkish-cased.png
+--------------------------------------------------
+ değerlendiriliyor: dbmdz/electra-base-turkish-cased-discriminator
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_10 (Validation Accuracy: 0.8697)
+Model ve bileşenler yükleniyor...
+Test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Test veri seti üzerinde değerlendirme yapılıyor...
+
+--- TEST SONUÇLARI ---
+Accuracy: 0.8909
+Macro F1-Score: 0.7474
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.89      0.99      0.94       420
+       basis       0.94      0.62      0.75        74
+      differ       0.88      0.70      0.78        10
+     discuss       0.91      0.33      0.49        30
+     support       0.76      0.81      0.79        16
+
+    accuracy                           0.89       550
+   macro avg       0.88      0.69      0.75       550
+weighted avg       0.89      0.89      0.88       550
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_1_1_flat/confusion_matrix_electra-base-turkish-cased-discriminator.png
+--------------------------------------------------
+ değerlendiriliyor: xlm-roberta-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_6 (Validation Accuracy: 0.8636)
+Model ve bileşenler yükleniyor...
+Test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Test veri seti üzerinde değerlendirme yapılıyor...
+
+--- TEST SONUÇLARI ---
+Accuracy: 0.8745
+Macro F1-Score: 0.6946
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.91      0.95      0.93       420
+       basis       0.78      0.73      0.76        74
+      differ       0.58      0.70      0.64        10
+     discuss       0.71      0.40      0.51        30
+     support       0.75      0.56      0.64        16
+
+    accuracy                           0.87       550
+   macro avg       0.75      0.67      0.69       550
+weighted avg       0.87      0.87      0.87       550
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_1_1_flat/confusion_matrix_xlm-roberta-base.png
+--------------------------------------------------
+ değerlendiriliyor: microsoft/deberta-v3-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_19 (Validation Accuracy: 0.8303)
+Model ve bileşenler yükleniyor...
+Test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Test veri seti üzerinde değerlendirme yapılıyor...
+
+--- TEST SONUÇLARI ---
+Accuracy: 0.8527
+Macro F1-Score: 0.6421
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.87      0.97      0.92       420
+       basis       0.85      0.46      0.60        74
+      differ       0.60      0.60      0.60        10
+     discuss       0.73      0.37      0.49        30
+     support       0.59      0.62      0.61        16
+
+    accuracy                           0.85       550
+   macro avg       0.73      0.60      0.64       550
+weighted avg       0.85      0.85      0.84       550
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_1_1_flat/confusion_matrix_deberta-v3-base.png
+--------------------------------------------------
+ değerlendiriliyor: answerdotai/ModernBERT-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_0 (Validation Accuracy: 0.8091)
+Model ve bileşenler yükleniyor...
+Test veri seti yeniden oluşturuluyor...
+Test için 550 örnek yüklendi.
+Test veri seti üzerinde değerlendirme yapılıyor...
+
+--- TEST SONUÇLARI ---
+Accuracy: 0.7891
+Macro F1-Score: 0.5037
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.84      0.93      0.88       420
+       basis       0.48      0.41      0.44        74
+      differ       0.50      0.30      0.38        10
+     discuss       0.62      0.17      0.26        30
+     support       0.78      0.44      0.56        16
+
+    accuracy                           0.79       550
+   macro avg       0.64      0.45      0.50       550
+weighted avg       0.77      0.79      0.77       550
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_1_1_flat/confusion_matrix_ModernBERT-base.png
+
+
+============================================================
+           TÜM MODELLERİN ÖZET SONUÇLARI (Experiment 1.1)
+============================================================
+                              model_name  accuracy  macro_f1
+                 bert-base-turkish-cased  0.876364  0.687248
+electra-base-turkish-cased-discriminator  0.890909  0.747404
+                        xlm-roberta-base  0.874545  0.694602
+                         deberta-v3-base  0.852727  0.642072
+                         ModernBERT-base  0.789091  0.503686
+============================================================
+
+Karşılaştırma grafiği kaydedildi: outputs_02/experiment_1_1_flat/model_comparison.png

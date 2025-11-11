@@ -1,0 +1,151 @@
+Kullanılan Cihaz: mps
+
+--------------------------------------------------
+DEĞERLENDİRİLİYOR: dbmdz/bert-base-turkish-cased
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_3 (Validation Accuracy: 0.8974)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti (Context-Aware) yeniden oluşturuluyor...
+Test için 519 örnek yüklendi.
+Hiyerarşik (Context-Aware) test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (Experiment 3 - Context-Aware Hierarchical) ---
+Accuracy: 0.8960
+Macro F1-Score: 0.7984
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.95      0.93      0.94       403
+       basis       0.76      0.77      0.76        65
+      differ       0.92      0.79      0.85        14
+     discuss       0.44      0.57      0.50        21
+     support       0.89      1.00      0.94        16
+
+    accuracy                           0.90       519
+   macro avg       0.79      0.81      0.80       519
+weighted avg       0.90      0.90      0.90       519
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_3_context_aware_hierarchical/confusion_matrix_bert-base-turkish-cased.png
+--------------------------------------------------
+DEĞERLENDİRİLİYOR: dbmdz/electra-base-turkish-cased-discriminator
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_0 (Validation Accuracy: 0.9038)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti (Context-Aware) yeniden oluşturuluyor...
+Test için 519 örnek yüklendi.
+Hiyerarşik (Context-Aware) test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (Experiment 3 - Context-Aware Hierarchical) ---
+Accuracy: 0.8921
+Macro F1-Score: 0.7701
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.91      0.97      0.94       403
+       basis       0.77      0.63      0.69        65
+      differ       1.00      0.71      0.83        14
+     discuss       0.71      0.48      0.57        21
+     support       0.81      0.81      0.81        16
+
+    accuracy                           0.89       519
+   macro avg       0.84      0.72      0.77       519
+weighted avg       0.89      0.89      0.89       519
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_3_context_aware_hierarchical/confusion_matrix_electra-base-turkish-cased-discriminator.png
+--------------------------------------------------
+DEĞERLENDİRİLİYOR: xlm-roberta-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_10 (Validation Accuracy: 0.8782)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti (Context-Aware) yeniden oluşturuluyor...
+Test için 519 örnek yüklendi.
+Hiyerarşik (Context-Aware) test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (Experiment 3 - Context-Aware Hierarchical) ---
+Accuracy: 0.8593
+Macro F1-Score: 0.7433
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.92      0.91      0.91       403
+       basis       0.66      0.66      0.66        65
+      differ       0.92      0.86      0.89        14
+     discuss       0.63      0.57      0.60        21
+     support       0.52      0.88      0.65        16
+
+    accuracy                           0.86       519
+   macro avg       0.73      0.77      0.74       519
+weighted avg       0.87      0.86      0.86       519
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_3_context_aware_hierarchical/confusion_matrix_xlm-roberta-base.png
+--------------------------------------------------
+DEĞERLENDİRİLİYOR: microsoft/deberta-v3-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_15 (Validation Accuracy: 0.8878)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti (Context-Aware) yeniden oluşturuluyor...
+Test için 519 örnek yüklendi.
+Hiyerarşik (Context-Aware) test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (Experiment 3 - Context-Aware Hierarchical) ---
+Accuracy: 0.8574
+Macro F1-Score: 0.7541
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.93      0.90      0.92       403
+       basis       0.57      0.71      0.63        65
+      differ       1.00      0.71      0.83        14
+     discuss       0.73      0.52      0.61        21
+     support       0.64      1.00      0.78        16
+
+    accuracy                           0.86       519
+   macro avg       0.77      0.77      0.75       519
+weighted avg       0.87      0.86      0.86       519
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_3_context_aware_hierarchical/confusion_matrix_deberta-v3-base.png
+--------------------------------------------------
+DEĞERLENDİRİLİYOR: answerdotai/ModernBERT-base
+--------------------------------------------------
+En iyi deneme (trial) bulundu: trial_12 (Validation Accuracy: 0.8654)
+Model ve bileşenler yükleniyor...
+Orijinal test veri seti (Context-Aware) yeniden oluşturuluyor...
+Test için 519 örnek yüklendi.
+Hiyerarşik (Context-Aware) test süreci başlatılıyor...
+
+--- TEST SONUÇLARI (Experiment 3 - Context-Aware Hierarchical) ---
+Accuracy: 0.8382
+Macro F1-Score: 0.6664
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.89      0.92      0.90       403
+       basis       0.62      0.62      0.62        65
+      differ       0.89      0.57      0.70        14
+     discuss       0.39      0.33      0.36        21
+     support       0.85      0.69      0.76        16
+
+    accuracy                           0.84       519
+   macro avg       0.73      0.62      0.67       519
+weighted avg       0.83      0.84      0.84       519
+
+
+Confusion matrix kaydedildi: outputs_02/experiment_3_context_aware_hierarchical/confusion_matrix_ModernBERT-base.png
+
+
+============================================================
+     TÜM MODELLERİN ÖZET SONUÇLARI (Experiment 3 - Context-Aware Hierarchical)
+============================================================
+                              model_name  accuracy  macro_f1
+                 bert-base-turkish-cased  0.895954  0.798373
+electra-base-turkish-cased-discriminator  0.892100  0.770131
+                        xlm-roberta-base  0.859345  0.743275
+                         deberta-v3-base  0.857418  0.754073
+                         ModernBERT-base  0.838150  0.666387
+============================================================
+
+Karşılaştırma grafiği kaydedildi: outputs_02/experiment_3_context_aware_hierarchical/model_comparison.png
