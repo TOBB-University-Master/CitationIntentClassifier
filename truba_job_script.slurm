@@ -40,7 +40,4 @@ echo "-------------------------------------------------"
 echo "Ortam yüklendi, Python betiği başlatılıyor..."
 echo "-------------------------------------------------"
 
-echo "Ortam yüklendi, Python betiği başlatılıyor..."
-echo "-------------------------------------------------"
-
-python -u train_v3.py --model_index "$SLURM_ARRAY_TASK_ID"
+python -u experiment_1_train_03.py --model_index "$SLURM_ARRAY_TASK_ID"
