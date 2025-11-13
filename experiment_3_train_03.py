@@ -1,4 +1,6 @@
 import argparse
+from comet_ml import Experiment
+from comet_ml import OfflineExperiment
 import torch
 import os
 import logging
@@ -18,11 +20,7 @@ from dataset import CitationDataset
 from FocalLoss import FocalLoss
 from generic_model import TransformerClassifier
 from tqdm import tqdm
-from comet_ml import Experiment
-from comet_ml import OfflineExperiment
 from sklearn.utils.class_weight import compute_class_weight
-import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 
 """
@@ -58,7 +56,7 @@ DATASET_INFO = False
 NUMBER_TRIALS = 20
 NUMBER_EPOCHS = 50
 DEFAULT_MODEL_INDEX = 0
-NUMBER_CPU = 20
+NUMBER_CPU = 8
 PATIENCE = 10
 # -----------------------------------------------------
 
@@ -158,7 +156,13 @@ def train_top_level_classifier(config, experiment):
     logging.info("--- ADIM 1: Üst Seviye (İkili) Sınıflandırıcı Eğitimi Başlatılıyor ---")
     logging.info(f"Kullanılan Model: {config['model_name']}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
     torch.manual_seed(config["seed"])
 
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
@@ -253,6 +257,7 @@ def train_top_level_classifier(config, experiment):
             total_loss += loss.item()
             progress_bar.set_postfix(loss=f"{total_loss / (progress_bar.n + 1):.4f}")
 
+        logging.info(f"\nEvaluate başlanıyor...")
         val_acc, val_report, val_macro_f1, avg_val_loss = evaluate(model, val_loader, device, label_names_list,criterion)
         avg_train_loss = total_loss / len(train_loader)
 
@@ -302,7 +307,12 @@ def train_expert_classifier(config, experiment):
     logging.info("\n--- ADIM 2: Uzman (Çok Sınıflı) Sınıflandırıcı Eğitimi Başlatılıyor ---")
     logging.info(f"Kullanılan Model: {config['model_name']}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
     torch.manual_seed(config["seed"])
 
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
@@ -397,8 +407,8 @@ def train_expert_classifier(config, experiment):
             total_loss += loss.item()
             progress_bar.set_postfix(loss=f"{total_loss / (progress_bar.n + 1):.4f}")
 
+        logging.info(f"\nEvaluate başlanıyor...")
         val_acc, val_report, val_macro_f1, avg_val_loss = evaluate(model, val_loader, device, label_names_list, criterion)
-
         avg_train_loss = total_loss / len(train_loader)
 
         logging.info(f"\nEpoch {epoch + 1} - Train Loss: {avg_train_loss:.4f}")
@@ -554,26 +564,17 @@ def evaluate_hierarchical(config, experiment):
     # --- KARIŞIKLIK MATRİSİ (CONFUSION MATRIX) ---
     try:
         logging.info("Karışıklık matrisi oluşturuluyor...")
-        cm = confusion_matrix(all_labels, all_preds)
-        fig, ax = plt.subplots(figsize=(10, 8))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                    xticklabels=orig_label_names, yticklabels=orig_label_names, ax=ax)
-        ax.set_title(f'Birleşik Karışıklık Matrisi - Trial {experiment.get_key().split("/")[-1][:7]}')
-        ax.set_ylabel('Gerçek Etiket (True Label)')
-        ax.set_xlabel('Tahmin Edilen Etiket (Predicted Label)')
-        plt.xticks(rotation=45)
-        plt.yticks(rotation=0)
-
-        # Comet'e figür olarak log'la
-        experiment.log_figure(fig, "combined_confusion_matrix")
-        plt.close(fig)
-        logging.info("Karışıklık matrisi Comet'e log'landı.")
+        experiment.log_confusion_matrix(
+            y_true=all_labels,
+            y_predicted=all_preds,
+            labels=orig_label_names,
+            title="Birleşik Karışıklık Matrisi",
+            file_name="combined_confusion_matrix.json"
+        )
 
     except Exception as e:
         logging.warning(f"Karışıklık matrisi oluşturulamadı: {e}")
-    # --- KARIŞIKLIK MATRİSİ ---
 
-    # Optuna'ya TEST F1 skorunu döndür
     return overall_accuracy
 
 
