@@ -10,7 +10,6 @@ import numpy as np
 
 from functools import partial
 from torch import Generator
-from sklearn.metrics import classification_report, accuracy_score
 from torch.utils.data import DataLoader, random_split, Subset
 from transformers import get_scheduler, AutoTokenizer
 from torch.optim import AdamW
@@ -22,6 +21,18 @@ from tqdm import tqdm
 from comet_ml import Experiment
 from comet_ml import OfflineExperiment
 from sklearn.utils.class_weight import compute_class_weight
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+
+"""
+    Bu eğitim versiyonunda ek olarak şunlar yapılmaktadır:
+    - HEDEF: ACCURACY (Doğruluk)
+    - Sabit Train/Val/Test dosyaları
+    - Focal Loss kullanımı (sınıf dengesizliği için)
+    - Erken Durdurma (Early Stopping)
+    - Öğrenme Hızı Isınması (Learning Rate Warmup)
+"""
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
@@ -37,13 +48,17 @@ MODEL_NAMES = [
 COMET_PROJECT_NAME_PREFIX = "experiment-3-rich"
 COMET_WORKSPACE = "ulakbim-cic-train"
 COMET_ONLINE_MODE = True
-DATA_PATH = "data/data_v3.csv"
+
+DATASET_PATH_TRAIN = "data/data_v2_train_ext.csv"
+DATASET_PATH_VAL = "data/data_v2_val_ext.csv"
+DATASET_PATH_TEST = "data/data_v2_test_ext.csv"
+
 DATA_OUTPUT_PATH = "checkpoints_v3"
 DATASET_INFO = False
 NUMBER_TRIALS = 20
 NUMBER_EPOCHS = 50
 DEFAULT_MODEL_INDEX = 0
-NUMBER_CPU = 0
+NUMBER_CPU = 20
 PATIENCE = 10
 # -----------------------------------------------------
 
@@ -150,61 +165,37 @@ def train_top_level_classifier(config, experiment):
     special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
     tokenizer.add_special_tokens(special_tokens_dict)
 
-    logging.info("İkili sınıflandırma için veri seti yükleniyor...")
-    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=DATA_PATH, task='binary', include_section_in_input=True)
-    num_labels = len(full_dataset.get_label_names())
-    label_names_list = full_dataset.get_label_names()
+    logging.info(f"İkili sınıflandırma için EĞİTİM veri seti yükleniyor: {config['data_path_train']}")
+    train_dataset = CitationDataset(
+        tokenizer=tokenizer,
+        mode="labeled",
+        csv_path=config['data_path_train'],
+        task='binary',
+        include_section_in_input=True
+    )
+
+    logging.info(f"İkili sınıflandırma için DOĞRULAMA veri seti yükleniyor: {config['data_path_val']}")
+    val_dataset = CitationDataset(
+        tokenizer=tokenizer,
+        mode="labeled",
+        csv_path=config['data_path_val'],
+        task='binary',
+        include_section_in_input=True
+    )
+
+    num_labels = len(train_dataset.get_label_names())
+    label_names_list = train_dataset.get_label_names()
     logging.info(f"Sınıf sayısı: {num_labels}, Sınıflar: {label_names_list}")
 
     with open(config["label_encoder_binary_path"], "wb") as f:
-        pickle.dump(full_dataset.label_encoder, f)
+        pickle.dump(train_dataset.label_encoder, f)
     logging.info(f"İkili label encoder şuraya kaydedildi: {config['label_encoder_binary_path']}")
-
-    generator = Generator().manual_seed(config["seed"])
-    train_val_size = int(0.8 * len(full_dataset))
-    test_size = len(full_dataset) - train_val_size
-    train_val_dataset, test_dataset = random_split(
-        full_dataset, [train_val_size, test_size], generator=generator
-    )
-
-    logging.info("Eğitim/Doğrulama seti, %85 Eğitim ve %15 Doğrulama olarak ayrılıyor...")
-    train_size = int(0.85 * len(train_val_dataset))
-    val_size = len(train_val_dataset) - train_size
-    train_dataset, val_dataset = random_split(
-        train_val_dataset, [train_size, val_size], generator=generator
-    )
 
     num_workers = config.get("num_workers", 0)
     logging.info(f"DataLoader (Binary) için {num_workers} adet worker (CPU çekirdeği) kullanılacak.")
 
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=num_workers)
-
-    if config["print_labels"]:
-        label_names = full_dataset.label_encoder.classes_
-        display_samples("Eğitim Seti (Binary)", train_loader, tokenizer, num_samples=2)
-        display_samples("Doğrulama Seti (Binary)", val_loader, tokenizer, num_samples=2)
-        display_samples("Test Seti (Binary)", test_loader, tokenizer, num_samples=2)
-
-        def log_class_distribution(subset, name):
-            labels = [subset[i]['label'].item() for i in range(len(subset))]
-            counts = Counter(labels)
-            label_names = subset.dataset.label_encoder.classes_ if not isinstance(subset.dataset,
-                                                                                  Subset) else subset.dataset.dataset.label_encoder.classes_
-            logging.info(f"--- {name} Sınıf Dağilımı ---")
-            logging.info(f"Toplam Örnek: {len(subset)}")
-            for label_id, count in sorted(counts.items()):
-                original_dataset = subset
-                while isinstance(original_dataset, Subset):
-                    original_dataset = original_dataset.dataset
-                label_names = original_dataset.label_encoder.classes_
-                logging.info(f"    {label_names[label_id]} (ID: {label_id}): {count}")
-
-        log_class_distribution(train_dataset, "Eğitim Seti")
-        log_class_distribution(val_dataset, "Doğrulama Seti")
-        log_class_distribution(test_dataset, "Test Seti")
-        exit(0)
 
     # --- FOCAL LOSS ve SINIF AĞIRLIKLARI (Binary) ---
     try:
@@ -236,6 +227,7 @@ def train_top_level_classifier(config, experiment):
 
     # --- EARLY STOPPING Değişkenleri ---
     start_epoch = 0
+    best_val_acc = 0.0
     best_val_f1 = 0.0
     epochs_no_improve = 0
     best_epoch = 0
@@ -278,14 +270,16 @@ def train_top_level_classifier(config, experiment):
         experiment.log_metrics(metrics_dict, step=epoch + 1)
 
         # --- EARLY STOPPING LOGIC ---
-        if val_macro_f1 > best_val_f1:
-            best_val_f1 = val_macro_f1
+        #if val_macro_f1 > best_val_f1:
+        #    best_val_f1 = val_macro_f1
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             best_epoch = epoch + 1
             epochs_no_improve = 0
-            logging.info(f"🚀 Yeni en iyi ikili model (Macro F1) kaydediliyor: {best_val_f1:.4f}")
+            logging.info(f"🚀 Yeni en iyi ikili model (Accuracy) kaydediliyor: {best_val_acc:.4f}")
             torch.save(model.state_dict(), config["best_model_path_binary"])
             experiment.log_text(f"epoch_{epoch + 1}_best_report_binary.txt", val_report)
-            experiment.log_metric("best_validation_macro_f1_binary", best_val_f1, step=epoch + 1)
+            experiment.log_metric("best_validation_accuracy_binary", best_val_acc, step=epoch + 1)
         else:
             epochs_no_improve += 1
 
@@ -295,7 +289,7 @@ def train_top_level_classifier(config, experiment):
             break
         # --- EARLY STOPPING ---
 
-    return best_val_f1
+    return best_val_acc
 
 
 def train_expert_classifier(config, experiment):
@@ -315,61 +309,37 @@ def train_expert_classifier(config, experiment):
     special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
     tokenizer.add_special_tokens(special_tokens_dict)
 
-    logging.info("Çok sınıflı (Non-Background) veri seti yükleniyor...")
-    full_dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path=DATA_PATH, task='multiclass', include_section_in_input=True)
-    num_labels = len(full_dataset.get_label_names())
-    label_names_list = full_dataset.get_label_names()
+    logging.info(f"Çok sınıflı (Non-Background) EĞİTİM veri seti yükleniyor: {config['data_path_train']}")
+    train_dataset = CitationDataset(
+        tokenizer=tokenizer,
+        mode="labeled",
+        csv_path=config['data_path_train'],
+        task='multiclass',
+        include_section_in_input=True
+    )
+
+    logging.info(f"Çok sınıflı (Non-Background) DOĞRULAMA veri seti yükleniyor: {config['data_path_val']}")
+    val_dataset = CitationDataset(
+        tokenizer=tokenizer,
+        mode="labeled",
+        csv_path=config['data_path_val'],
+        task='multiclass',
+        include_section_in_input=True
+    )
+
+    num_labels = len(train_dataset.get_label_names())
+    label_names_list = train_dataset.get_label_names()
     logging.info(f"Sınıf sayısı: {num_labels}, Sınıflar: {label_names_list}")
 
     with open(config["label_encoder_multiclass_path"], "wb") as f:
-        pickle.dump(full_dataset.label_encoder, f)
+        pickle.dump(train_dataset.label_encoder, f)
     logging.info(f"Çok sınıflı label encoder şuraya kaydedildi: {config['label_encoder_multiclass_path']}")
-
-    generator = Generator().manual_seed(config["seed"])
-    train_val_size = int(0.8 * len(full_dataset))
-    test_size = len(full_dataset) - train_val_size
-    train_val_dataset, test_dataset = random_split(
-        full_dataset, [train_val_size, test_size], generator=generator
-    )
-
-    logging.info("Eğitim/Doğrulama seti, %85 Eğitim ve %15 Doğrulama olarak ayrılıyor...")
-    train_size = int(0.85 * len(train_val_dataset))
-    val_size = len(train_val_dataset) - train_size
-    train_dataset, val_dataset = random_split(
-        train_val_dataset, [train_size, val_size], generator=generator
-    )
 
     num_workers = config.get("num_workers", 0)
     logging.info(f"DataLoader (Multiclass) için {num_workers} adet worker (CPU çekirdeği) kullanılacak.")
 
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=num_workers)
-
-    if config["print_labels"]:
-        label_names = full_dataset.label_encoder.classes_
-        display_samples("Eğitim Seti (Binary)", train_loader, tokenizer, num_samples=2)
-        display_samples("Doğrulama Seti (Binary)", val_loader, tokenizer, num_samples=2)
-        display_samples("Test Seti (Binary)", test_loader, tokenizer, num_samples=2)
-
-        def log_class_distribution(subset, name):
-            labels = [subset[i]['label'].item() for i in range(len(subset))]
-            counts = Counter(labels)
-            label_names = subset.dataset.label_encoder.classes_ if not isinstance(subset.dataset,
-                                                                                  Subset) else subset.dataset.dataset.label_encoder.classes_
-            logging.info(f"--- {name} Sınıf Dağilımı ---")
-            logging.info(f"Toplam Örnek: {len(subset)}")
-            for label_id, count in sorted(counts.items()):
-                original_dataset = subset
-                while isinstance(original_dataset, Subset):
-                    original_dataset = original_dataset.dataset
-                label_names = original_dataset.label_encoder.classes_
-                logging.info(f"    {label_names[label_id]} (ID: {label_id}): {count}")
-
-        log_class_distribution(train_dataset, "Eğitim Seti")
-        log_class_distribution(val_dataset, "Doğrulama Seti")
-        log_class_distribution(test_dataset, "Test Seti")
-        exit(0)
 
     # --- FOCAL LOSS ve SINIF AĞIRLIKLARI (Multiclass) ---
     try:
@@ -402,6 +372,7 @@ def train_expert_classifier(config, experiment):
     # --- EARLY STOPPING Değişkenleri ---
     start_epoch = 0
     best_val_f1 = 0.0
+    best_val_acc = 0.0
     epochs_no_improve = 0
     best_epoch = 0
     logging.info("Yeni bir eğitim başlatılıyor.")
@@ -444,14 +415,14 @@ def train_expert_classifier(config, experiment):
         experiment.log_metrics(metrics_dict, step=epoch + 1)
 
         # --- EARLY STOPPING LOGIC ---
-        if val_macro_f1 > best_val_f1:
-            best_val_f1 = val_macro_f1
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
             best_epoch = epoch + 1
             epochs_no_improve = 0
-            logging.info(f"🚀 Yeni en iyi uzman model (Macro F1) kaydediliyor: {best_val_f1:.4f}")
+            logging.info(f"🚀 Yeni en iyi uzman model (Accuracy) kaydediliyor: {best_val_acc:.4f}")
             torch.save(model.state_dict(), config["best_model_path_multiclass"])
             experiment.log_text(f"epoch_{epoch + 1}_best_report_multiclass.txt", val_report)
-            experiment.log_metric("best_validation_macro_f1_multiclass", best_val_f1, step=epoch + 1)
+            experiment.log_metric("best_validation_accuracy_multiclass", best_val_acc, step=epoch + 1)
         else:
             epochs_no_improve += 1
 
@@ -460,7 +431,150 @@ def train_expert_classifier(config, experiment):
             break
         # --- EARLY STOPPING ---
 
-    return best_val_f1
+    return best_val_acc
+
+
+def evaluate_hierarchical(config, experiment):
+    """
+    Eğitilmiş ikili ve uzman modellerle TEST SETİ üzerinde hiyerarşik birleşik performansı ölçer.
+    Karışıklık Matrisini Comet'e log'lar.
+    """
+    logging.info("\n--- ADIM 3: Birleşik Hiyerarşik TEST Değerlendirmesi Başlatılıyor ---")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    # Gerekli tüm bileşenleri yükle
+    tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
+    special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
+    tokenizer.add_special_tokens(special_tokens_dict)
+
+    # Orijinal (tüm sınıflar) etiket setini yükle
+    logging.info(f"Test veri seti yükleniyor: {config['data_path_test']}")
+    test_dataset_orig = CitationDataset(
+        tokenizer=tokenizer,
+        mode="labeled",
+        csv_path=config['data_path_test'],
+        task='all',
+        include_section_in_input=True
+    )
+    orig_label_names = test_dataset_orig.get_label_names()
+
+    # İkili ve Çok Sınıflı görevlerin label encoder'larını YÜKLE
+    with open(config["label_encoder_binary_path"], "rb") as f:
+        binary_encoder = pickle.load(f)
+    with open(config["label_encoder_multiclass_path"], "rb") as f:
+        multiclass_encoder = pickle.load(f)
+
+    # İkili modelin "Non-Background" etiketinin ID'sini bul
+    non_background_binary_id = list(binary_encoder.transform(['non-background']))[0]
+
+    # Modelleri oluştur ve eğitilmiş en iyi ağırlıkları yükle
+    binary_model = TransformerClassifier(model_name=config["model_name"], num_labels=len(binary_encoder.classes_))
+    binary_model.transformer.resize_token_embeddings(len(tokenizer))
+    binary_model.load_state_dict(torch.load(config["best_model_path_binary"], map_location=device))
+    binary_model.to(device)
+    binary_model.eval()
+
+    multiclass_model = TransformerClassifier(model_name=config["model_name"], num_labels=len(multiclass_encoder.classes_))
+    multiclass_model.transformer.resize_token_embeddings(len(tokenizer))
+    multiclass_model.load_state_dict(torch.load(config["best_model_path_multiclass"], map_location=device))
+    multiclass_model.to(device)
+    multiclass_model.eval()
+
+    num_workers = config.get("num_workers", 0)
+    logging.info(f"DataLoader (Hiyerarşik Test) için {num_workers} adet worker (CPU çekirdeği) kullanılacak.")
+    test_loader_orig = DataLoader(test_dataset_orig, batch_size=config["batch_size"], num_workers=num_workers)
+
+    all_preds, all_labels = [], []
+    with torch.no_grad():
+        for batch in test_loader_orig:
+            input_ids, attention_mask, labels = batch["input_ids"].to(device), batch["attention_mask"].to(device), \
+                batch["label"].to(device)
+
+            # Adım 1: Üst seviye model ile tahmin yap
+            binary_logits = binary_model(input_ids, attention_mask)
+            binary_preds = torch.argmax(binary_logits, dim=1)
+
+            final_preds = torch.zeros_like(binary_preds)
+
+            # Adım 2: Uzman modele danışılacak verileri belirle
+            expert_indices = (binary_preds == non_background_binary_id).nonzero(as_tuple=True)[0]
+
+            if len(expert_indices) > 0:
+                expert_input_ids = input_ids[expert_indices]
+                expert_attention_mask = attention_mask[expert_indices]
+
+                multiclass_logits = multiclass_model(expert_input_ids, expert_attention_mask)
+                multiclass_preds_raw = torch.argmax(multiclass_logits, dim=1)
+
+                multiclass_class_names = multiclass_encoder.inverse_transform(multiclass_preds_raw.cpu().numpy())
+                multiclass_preds_orig_ids = test_dataset_orig.label_encoder.transform(multiclass_class_names)
+
+                final_preds[expert_indices] = torch.tensor(multiclass_preds_orig_ids, device=device)
+
+            # İkili modelin "Background" dediği verilerin etiketini de ekle
+            background_indices = (binary_preds != non_background_binary_id).nonzero(as_tuple=True)[0]
+            background_orig_id = test_dataset_orig.label_encoder.transform(['background'])[0]
+            final_preds[background_indices] = background_orig_id
+
+            all_preds.extend(final_preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    overall_accuracy = accuracy_score(all_labels, all_preds)
+
+    report_dict = classification_report(
+        all_labels,
+        all_preds,
+        target_names=orig_label_names,
+        zero_division=0,
+        output_dict=True
+    )
+    report_str = classification_report(
+        all_labels,
+        all_preds,
+        target_names=orig_label_names,
+        zero_division=0,
+        output_dict=False
+    )
+
+    overall_macro_f1 = report_dict['macro avg']['f1-score']
+
+    logging.info(f"🏆 Birleşik Hiyerarşik TEST Başarımı (Accuracy): {overall_accuracy:.4f}")
+    logging.info(f"🏆 Birleşik Hiyerarşik TEST Başarımı (Macro F1): {overall_macro_f1:.4f}")
+    logging.info(f"Birleşik TEST Sınıflandırma Raporu:\n{report_str}")
+
+    experiment.log_metric("combined_hierarchical_test_accuracy", overall_accuracy)
+    experiment.log_metric("combined_hierarchical_test_macro_f1", overall_macro_f1)
+    experiment.log_text("combined_hierarchical_test_report.txt", report_str)
+
+    # --- KARIŞIKLIK MATRİSİ (CONFUSION MATRIX) ---
+    try:
+        logging.info("Karışıklık matrisi oluşturuluyor...")
+        cm = confusion_matrix(all_labels, all_preds)
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                    xticklabels=orig_label_names, yticklabels=orig_label_names, ax=ax)
+        ax.set_title(f'Birleşik Karışıklık Matrisi - Trial {experiment.get_key().split("/")[-1][:7]}')
+        ax.set_ylabel('Gerçek Etiket (True Label)')
+        ax.set_xlabel('Tahmin Edilen Etiket (Predicted Label)')
+        plt.xticks(rotation=45)
+        plt.yticks(rotation=0)
+
+        # Comet'e figür olarak log'la
+        experiment.log_figure(fig, "combined_confusion_matrix")
+        plt.close(fig)
+        logging.info("Karışıklık matrisi Comet'e log'landı.")
+
+    except Exception as e:
+        logging.warning(f"Karışıklık matrisi oluşturulamadı: {e}")
+    # --- KARIŞIKLIK MATRİSİ ---
+
+    # Optuna'ya TEST F1 skorunu döndür
+    return overall_accuracy
 
 
 def objective(trial, model_name):
@@ -481,6 +595,14 @@ def objective(trial, model_name):
 
     data_loader_workers = max(0, num_cpus - 1)
 
+    logging.info("=" * 50)
+    logging.info("     *** CPU (Worker) KONTROLÜ ***")
+    logging.info(f"    os.environ['SLURM_CPUS_PER_TASK']: {os.environ.get('SLURM_CPUS_PER_TASK')}")
+    logging.info(f"    NUMBER_CPU (Fallback Değeri): {NUMBER_CPU}")
+    logging.info(f"    Kullanılacak 'num_cpus' değeri: {num_cpus}")
+    logging.info(f"    Hesaplanan 'data_loader_workers' sayısı: {data_loader_workers}")
+    logging.info("=" * 50)
+
     # --- Config Dosyası ---
     model_short_name = model_name.split('/')[-1]
     output_dir = f"{DATA_OUTPUT_PATH}/{model_short_name}/trial_{trial.number}/"
@@ -495,17 +617,19 @@ def objective(trial, model_name):
         "print_labels": False,
         "num_workers": data_loader_workers,
 
+        "data_path_train": DATASET_PATH_TRAIN,
+        "data_path_val": DATASET_PATH_VAL,
+        "data_path_test": DATASET_PATH_TEST,
+
         "checkpoint_path_binary": os.path.join(output_dir, "binary/"),
         "best_model_path_binary": os.path.join(output_dir, "binary/best_model.pt"),
         "label_encoder_binary_path": os.path.join(output_dir, "binary/label_encoder_binary.pkl"),
         "resume_checkpoint_path_binary": os.path.join(output_dir, "binary/training_checkpoint.pt"),
-        # Not: Artık kullanılmıyor
 
         "checkpoint_path_multiclass": os.path.join(output_dir, "multiclass/"),
         "best_model_path_multiclass": os.path.join(output_dir, "multiclass/best_model.pt"),
         "label_encoder_multiclass_path": os.path.join(output_dir, "multiclass/label_encoder_multiclass.pkl"),
         "resume_checkpoint_path_multiclass": os.path.join(output_dir, "multiclass/training_checkpoint.pt")
-        # Not: Artık kullanılmıyor
     }
 
     os.makedirs(config["checkpoint_path_binary"], exist_ok=True)
@@ -543,10 +667,14 @@ def objective(trial, model_name):
         logging.info(f"\n--- DENEME {trial.number} BAŞLATILIYOR ({model_name}) ---")
         logging.info(f"Parametreler: {trial.params}")
 
-        # Optuna, her iki aşamanın da F1 skorlarını loglayacak,
-        # ancak optimizasyon hedefi olarak uzman (multiclass) modelin F1'ini kullanacak.
-        best_binary_val_f1 = train_top_level_classifier(config, experiment)
-        best_multiclass_val_f1 = train_expert_classifier(config, experiment)
+        # Adım 1: İkili Modeli (Train/Val) üzerinde eğit
+        best_binary_val_acc = train_top_level_classifier(config, experiment)
+
+        # Adım 2: Uzman Modeli (Train/Val) üzerinde eğit
+        best_multiclass_val_acc = train_expert_classifier(config, experiment)
+
+        # İki modeli birleştir ve TEST seti üzerinde değerlendir
+        overall_test_acc = evaluate_hierarchical(config, experiment)
 
         setup_logging(trial_log_file)
         logging.info(f"\nDENEME {trial.number} tamamlandı. Ortak yapılandırma dosyaları kaydediliyor...")
@@ -564,14 +692,15 @@ def objective(trial, model_name):
             json.dump(config, f, indent=4, ensure_ascii=False)
         logging.info(f"Yapılandırma dosyası şuraya kaydedildi: {config_path}")
 
-        logging.info(f"DENEME {trial.number} Sonuç: Binary Val F1: {best_binary_val_f1:.4f}, Multiclass Val F1: {best_multiclass_val_f1:.4f}")
+        logging.info(f"DENEME {trial.number} Sonuç: Binary Val Acc: {best_binary_val_acc:.4f}, Multiclass Val Acc: {best_multiclass_val_acc:.4f}")  # <-- GÜNCELLENDİ
+        logging.info(f"DENEME {trial.number} Nihai Skor (Test Acc): {overall_test_acc:.4f}")
 
-        experiment.log_metric("final_binary_val_f1", best_binary_val_f1)
-        experiment.log_metric("final_multiclass_val_f1", best_multiclass_val_f1)
+        experiment.log_metric("final_binary_val_acc", best_binary_val_acc)
+        experiment.log_metric("final_multiclass_val_acc", best_multiclass_val_acc)
         experiment.end()
 
-        # Optuna'nın optimize edeceği değer (uzman modelin F1'i)
-        return best_multiclass_val_f1
+        # Optuna'ya TEST seti üzerindeki skoru döndür
+        return overall_test_acc
 
     except Exception as e:
         try:
@@ -629,56 +758,53 @@ def main():
     args = parser.parse_args()
     model_index = args.model_index
 
-    if DATASET_INFO:
-        print_dataset_info(model_name=MODEL_NAMES[0], data_path=DATA_PATH, seed=42)
-    else:
-        try:
-            model_name = MODEL_NAMES[model_index]
-        except IndexError:
-            print(
-                f"HATA: Geçersiz model_index: {model_index}. Bu değer 0 ile {len(MODEL_NAMES) - 1} arasında olmalıdır.")
-            return
+    try:
+        model_name = MODEL_NAMES[model_index]
+    except IndexError:
+        print(
+            f"HATA: Geçersiz model_index: {model_index}. Bu değer 0 ile {len(MODEL_NAMES) - 1} arasında olmalıdır.")
+        return
 
-        print(f"\n\n{'=' * 60}")
-        print(f"--- BAŞLATILIYOR: {model_name} için {NUMBER_TRIALS} denemelik optimizasyon ---")
-        print(f"--- (Focal Loss, Early Stopping, LR Warmup ile) ---")  # <-- YENİ
-        print(f"{'=' * 60}\n")
+    print(f"\n\n{'=' * 60}")
+    print(f"--- BAŞLATILIYOR: {model_name} için {NUMBER_TRIALS} denemelik optimizasyon ---")
+    print(f"--- (Focal Loss, Early Stopping, LR Warmup ile) ---")  # <-- YENİ
+    print(f"{'=' * 60}\n")
 
-        try:
-            model_short_name = model_name.split('/')[-1]
-            study_name = f"{model_short_name}_hiearchical_study"
+    try:
+        model_short_name = model_name.split('/')[-1]
+        study_name = f"{model_short_name}_hiearchical_study"
 
-            os.makedirs(DATA_OUTPUT_PATH, exist_ok=True)
-            storage_path = f"sqlite:///{os.path.join(DATA_OUTPUT_PATH, f'{model_short_name}_hierarchical.db')}"
+        os.makedirs(DATA_OUTPUT_PATH, exist_ok=True)
+        storage_path = f"sqlite:///{os.path.join(DATA_OUTPUT_PATH, f'{model_short_name}_hierarchical.db')}"
 
-            study = optuna.create_study(
-                study_name=study_name,
-                storage=storage_path,
-                load_if_exists=True,
-                direction="maximize"
-            )
+        study = optuna.create_study(
+            study_name=study_name,
+            storage=storage_path,
+            load_if_exists=True,
+            direction="maximize"
+        )
 
-            objective_with_model = partial(objective, model_name=model_name)
-            study.optimize(objective_with_model, n_trials=NUMBER_TRIALS)
+        objective_with_model = partial(objective, model_name=model_name)
+        study.optimize(objective_with_model, n_trials=NUMBER_TRIALS)
 
-            print(f"\n--- {model_name} İÇİN OPTİMİZASYON TAMAMLANDI ---")
-            print(f"En iyi deneme (Best trial): {study.best_trial.number}")
-            print(f"En iyi değer (Best value - Uzman Model Macro F1): {study.best_value:.4f}")
-            print("En iyi parametreler (Best params):")
-            for key, value in study.best_params.items():
-                print(f"    {key}: {value}")
+        print(f"\n--- {model_name} İÇİN OPTİMİZASYON TAMAMLANDI ---")
+        print(f"En iyi deneme (Best trial): {study.best_trial.number}")
+        print(f"En iyi değer (Best value - Test Seti Accuracy): {study.best_value:.4f}")
+        print("En iyi parametreler (Best params):")
+        for key, value in study.best_params.items():
+            print(f"    {key}: {value}")
 
-            model_short_name = model_name.split('/')[-1]
-            best_trial_dir = f"{DATA_OUTPUT_PATH}/{model_short_name}/trial_{study.best_trial.number}/"
-            print(f"\nEn iyi modelin ve logların kaydedildiği klasör: {best_trial_dir}")
+        model_short_name = model_name.split('/')[-1]
+        best_trial_dir = f"{DATA_OUTPUT_PATH}/{model_short_name}/trial_{study.best_trial.number}/"
+        print(f"\nEn iyi modelin ve logların kaydedildiği klasör: {best_trial_dir}")
 
-        except Exception as e:
-            print(f"KRİTİK HATA: {model_name} için optimizasyon durduruldu. Hata: {e}")
+    except Exception as e:
+        print(f"KRİTİK HATA: {model_name} için optimizasyon durduruldu. Hata: {e}")
 
 
-        print(f"\n\n{'=' * 60}")
-        print("TÜM MODELLERİN OPTİMİZASYONU TAMAMLANDI.")
-        print(f"{'=' * 60}")
+    print(f"\n\n{'=' * 60}")
+    print("TÜM MODELLERİN OPTİMİZASYONU TAMAMLANDI.")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

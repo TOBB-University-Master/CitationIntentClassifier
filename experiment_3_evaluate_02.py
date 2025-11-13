@@ -28,11 +28,11 @@ MODELS = [
 # train_v3.py'den
 DATA_PATH = "data/data_v3.csv"
 # train_v3.py'deki DATA_OUTPUT_PATH
-BASE_CHECKPOINT_DIR = "checkpoints_v3_02"
+BASE_CHECKPOINT_DIR = "checkpoints_v3"
 SEED = 42
 BATCH_SIZE = 16
 # Sonuç klasörü v3 olarak güncellendi
-RESULTS_DIR = "outputs_02/experiment_3_context_aware_hierarchical"
+RESULTS_DIR = "outputs_test/experiment_3_context_aware_hierarchical"
 
 
 # ==============================================================================
