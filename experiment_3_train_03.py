@@ -1,7 +1,13 @@
 import argparse
 from comet_ml import Experiment
 from comet_ml import OfflineExperiment
+
 import torch
+import torch.nn as nn
+from torch import Generator
+from torch.utils.data import DataLoader, random_split, Subset
+from torch.optim import AdamW
+
 import os
 import logging
 import pickle
@@ -11,10 +17,7 @@ import sys
 import numpy as np
 
 from functools import partial
-from torch import Generator
-from torch.utils.data import DataLoader, random_split, Subset
 from transformers import get_scheduler, AutoTokenizer
-from torch.optim import AdamW
 from collections import Counter
 from dataset import CitationDataset
 from FocalLoss import FocalLoss
@@ -44,7 +47,7 @@ MODEL_NAMES = [
 ]
 
 COMET_PROJECT_NAME_PREFIX = "experiment-3-rich"
-COMET_WORKSPACE = "ulakbim-cic-train"
+COMET_WORKSPACE = "ulakbim-cic-train-accuracy"
 COMET_ONLINE_MODE = True
 
 DATASET_PATH_TRAIN = "data/data_v2_train_ext.csv"
@@ -53,6 +56,7 @@ DATASET_PATH_TEST = "data/data_v2_test_ext.csv"
 
 DATA_OUTPUT_PATH = "checkpoints_v3"
 DATASET_INFO = False
+LOSS_FUNCTION = "CrossEntropyLoss"      # {CrossEntropyLoss, FocalLoss}
 NUMBER_TRIALS = 20
 NUMBER_EPOCHS = 50
 DEFAULT_MODEL_INDEX = 0
@@ -208,7 +212,17 @@ def train_top_level_classifier(config, experiment):
         class_weights = compute_class_weight('balanced', classes=unique_labels, y=train_labels)
         class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
         logging.info(f"İkili Sınıf Ağırlıkları (Focal Loss): {class_weights}")
-        criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
+
+        if config["loss_function"] == "FocalLoss":
+            logging.info("FocalLoss (alpha=weights, gamma=2.0) kullanılıyor.")
+            criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
+        elif config["loss_function"] == "CrossEntropyLoss":
+            logging.info("CrossEntropyLoss (weight=weights) kullanılıyor.")
+            criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+        else:
+            logging.warning(f"Bilinmeyen loss fonksiyonu: {config['loss_function']}. FocalLoss (gamma=2.0) kullanılacak.")
+            criterion = FocalLoss(gamma=2.0)
+
     except Exception as e:
         logging.error(f"Sınıf ağırlıkları hesaplanırken hata: {e}. Standart FocalLoss (alpha=None) kullanılacak.")
         criterion = FocalLoss(gamma=2.0)
@@ -358,7 +372,16 @@ def train_expert_classifier(config, experiment):
         class_weights = compute_class_weight('balanced', classes=unique_labels, y=train_labels)
         class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
         logging.info(f"Çok Sınıflı Ağırlıklar (Focal Loss): {class_weights}")
-        criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
+
+        if config["loss_function"] == "FocalLoss":
+            logging.info("FocalLoss (alpha=weights, gamma=2.0) kullanılıyor.")
+            criterion = FocalLoss(alpha=class_weights_tensor, gamma=2.0)
+        elif config["loss_function"] == "CrossEntropyLoss":
+            logging.info("CrossEntropyLoss (weight=weights) kullanılıyor.")
+            criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+        else:
+            logging.warning(f"Bilinmeyen loss fonksiyonu: {config['loss_function']}. FocalLoss (gamma=2.0) kullanılacak.")
+            criterion = FocalLoss(gamma=2.0)
     except Exception as e:
         logging.error(f"Sınıf ağırlıkları hesaplanırken hata: {e}. Standart FocalLoss (alpha=None) kullanılacak.")
         criterion = FocalLoss(gamma=2.0)
@@ -587,6 +610,8 @@ def objective(trial, model_name):
     lr = trial.suggest_float("lr", 1e-5, 5e-5, log=True)
     batch_size = trial.suggest_categorical("batch_size", [16, 32])
     warmup_ratio = trial.suggest_categorical("warmup_ratio", [0.05, 0.1])
+    # loss_function_name = trial.suggest_categorical("loss_function", ["FocalLoss", "CrossEntropyLoss"])
+    loss_function_name = LOSS_FUNCTION
     epochs = NUMBER_EPOCHS
 
     try:
@@ -612,7 +637,8 @@ def objective(trial, model_name):
         "batch_size": batch_size,
         "epochs": epochs,
         "lr": lr,
-        "warmup_ratio": warmup_ratio,  # <-- YENİ
+        "warmup_ratio": warmup_ratio,
+        "loss_function": loss_function_name,
         "model_name": model_name,
         "seed": 42,
         "print_labels": False,
