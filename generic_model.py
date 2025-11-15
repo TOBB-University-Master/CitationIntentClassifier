@@ -23,9 +23,21 @@ class TransformerClassifier(nn.Module):
         self.classifier = nn.Linear(hidden_size, num_labels)
 
 
-    def forward(self, input_ids, attention_mask):
+    def forward(self, input_ids, attention_mask, token_type_ids=None):
+        # 1. Modeli (BERT, RoBERTa vb.) çalıştırmak için argümanları hazırla
+        model_args = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask
+        }
+
+        # 2. Eğer 'token_type_ids' (dataset.py'den) geldiyse, argümanlara ekle.
+        #    Hugging Face modeli (AutoModel), bunun 'berturk' için gerekli
+        #    olduğunu bilir ancak 'xlm-roberta' için görmezden gelir.
+        if token_type_ids is not None:
+            model_args["token_type_ids"] = token_type_ids
+
         # Transformer modelinden temsilleri al
-        outputs = self.transformer(input_ids=input_ids, attention_mask=attention_mask)
+        outputs = self.transformer(**model_args)
 
         # last_hidden_state -> (batch_size, 128, 768) boyutunda, PAD dahil tüm vektörler
         last_hidden_state = outputs.last_hidden_state
