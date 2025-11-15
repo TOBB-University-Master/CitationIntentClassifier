@@ -25,6 +25,7 @@ from generic_model import TransformerClassifier
 from tqdm import tqdm
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+import pandas as pd
 
 """
     Bu eğitim versiyonunda ek olarak şunlar yapılmaktadır:
@@ -173,11 +174,18 @@ def train_top_level_classifier(config, experiment):
     special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
     tokenizer.add_special_tokens(special_tokens_dict)
 
+    logging.info("Veri setleri RAM'e ön-yükleniyor...")
+    train_data_in_ram = pd.read_csv(config["data_path_train"])
+    val_data_in_ram = pd.read_csv(config["data_path_val"])
+    logging.info("Veri setleri RAM'e yüklendi.")
+
     logging.info(f"İkili sınıflandırma için EĞİTİM veri seti yükleniyor: {config['data_path_train']}")
     train_dataset = CitationDataset(
         tokenizer=tokenizer,
         mode="labeled",
-        csv_path=config['data_path_train'],
+        # CSV dosyasından okumak yerine RAM üzerinden alınır
+        # csv_path=config['data_path_train'],
+        data_frame=train_data_in_ram,
         task='binary',
         include_section_in_input=True
     )
@@ -186,7 +194,9 @@ def train_top_level_classifier(config, experiment):
     val_dataset = CitationDataset(
         tokenizer=tokenizer,
         mode="labeled",
-        csv_path=config['data_path_val'],
+        # CSV dosyasından okumak yerine RAM üzerinden alınır
+        # csv_path=config['data_path_val'],
+        data_frame=val_data_in_ram,
         task='binary',
         include_section_in_input=True
     )
@@ -333,11 +343,17 @@ def train_expert_classifier(config, experiment):
     special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
     tokenizer.add_special_tokens(special_tokens_dict)
 
+    logging.info("Veri setleri RAM'e ön-yükleniyor...")
+    train_data_in_ram = pd.read_csv(config["data_path_train"])
+    val_data_in_ram = pd.read_csv(config["data_path_val"])
+    logging.info("Veri setleri RAM'e yüklendi.")
+
     logging.info(f"Çok sınıflı (Non-Background) EĞİTİM veri seti yükleniyor: {config['data_path_train']}")
     train_dataset = CitationDataset(
         tokenizer=tokenizer,
         mode="labeled",
-        csv_path=config['data_path_train'],
+        # csv_path=config['data_path_train'],
+        data_frame=train_data_in_ram,
         task='multiclass',
         include_section_in_input=True
     )
@@ -346,7 +362,8 @@ def train_expert_classifier(config, experiment):
     val_dataset = CitationDataset(
         tokenizer=tokenizer,
         mode="labeled",
-        csv_path=config['data_path_val'],
+        # csv_path=config['data_path_val'],
+        data_frame=val_data_in_ram,
         task='multiclass',
         include_section_in_input=True
     )
@@ -485,12 +502,16 @@ def evaluate_hierarchical(config, experiment):
     special_tokens_dict = {'additional_special_tokens': ['<CITE>']}
     tokenizer.add_special_tokens(special_tokens_dict)
 
+    logging.info("Veri setleri RAM'e ön-yükleniyor...")
+    test_data_in_ram = pd.read_csv(config["data_path_test"])
+
     # Orijinal (tüm sınıflar) etiket setini yükle
     logging.info(f"Test veri seti yükleniyor: {config['data_path_test']}")
     test_dataset_orig = CitationDataset(
         tokenizer=tokenizer,
         mode="labeled",
-        csv_path=config['data_path_test'],
+        # csv_path=config['data_path_test'],
+        data_frame=test_data_in_ram,
         task='all',
         include_section_in_input=True
     )

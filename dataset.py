@@ -36,7 +36,8 @@ class CitationDataset(Dataset):
                  max_len=256,
                  mode="labeled",
                  task = None,
-                 include_section_in_input=False):
+                 include_section_in_input=False,
+                 data_frame=None):
         """
         tokenizer: Dışarıdan verilen, önceden yüklenmiş bir tokenizer nesnesi.
         csv_path: Veri setinin yolu.
@@ -51,7 +52,10 @@ class CitationDataset(Dataset):
         self.task = task
         self.include_section_in_input = include_section_in_input
 
-        if os.path.exists(csv_path):
+        if data_frame is not None:
+            print("DataFrame (RAM) üzerinden yükleniyor...")
+            self.df = data_frame
+        elif os.path.exists(csv_path):
             print(f"CSV bulundu, {csv_path} dosyasından yükleniyor...")
             self.df = pd.read_csv(csv_path)
         else:
