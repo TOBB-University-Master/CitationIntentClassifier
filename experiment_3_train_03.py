@@ -96,7 +96,16 @@ def evaluate(model, data_loader, device, label_names, criterion):
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["label"].to(device)
 
-            logits = model(input_ids, attention_mask)
+            token_type_ids = batch.get("token_type_ids")
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids.to(device)
+                logits = model(input_ids=input_ids,
+                               attention_mask=attention_mask,
+                               token_type_ids=token_type_ids)
+            else:
+                logits = model(input_ids=input_ids,
+                               attention_mask=attention_mask)
+
             preds = torch.argmax(logits, dim=1)
 
             if criterion is not None:
@@ -271,7 +280,16 @@ def train_top_level_classifier(config, experiment):
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["label"].to(device)
 
-            logits = model(input_ids, attention_mask)
+            token_type_ids = batch.get("token_type_ids")
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids.to(device)
+                logits = model(input_ids=input_ids,
+                               attention_mask=attention_mask,
+                               token_type_ids=token_type_ids)
+            else:
+                logits = model(input_ids=input_ids,
+                               attention_mask=attention_mask)
+
             loss = criterion(logits, labels)
 
             optimizer.zero_grad()
@@ -437,7 +455,16 @@ def train_expert_classifier(config, experiment):
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["label"].to(device)
 
-            logits = model(input_ids, attention_mask)
+            token_type_ids = batch.get("token_type_ids")
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids.to(device)
+                logits = model(input_ids=input_ids,
+                               attention_mask=attention_mask,
+                               token_type_ids=token_type_ids)
+            else:
+                logits = model(input_ids=input_ids,
+                               attention_mask=attention_mask)
+
             loss = criterion(logits, labels)
 
             optimizer.zero_grad()
@@ -549,8 +576,16 @@ def evaluate_hierarchical(config, experiment):
             input_ids, attention_mask, labels = batch["input_ids"].to(device), batch["attention_mask"].to(device), \
                 batch["label"].to(device)
 
+
+            token_type_ids = batch.get("token_type_ids")
+            model_args = {"input_ids": input_ids, "attention_mask": attention_mask}
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids.to(device)
+                model_args["token_type_ids"] = token_type_ids
+
             # Adım 1: Üst seviye model ile tahmin yap
-            binary_logits = binary_model(input_ids, attention_mask)
+            binary_logits = binary_model(**model_args)
+
             binary_preds = torch.argmax(binary_logits, dim=1)
 
             final_preds = torch.zeros_like(binary_preds)
@@ -562,7 +597,15 @@ def evaluate_hierarchical(config, experiment):
                 expert_input_ids = input_ids[expert_indices]
                 expert_attention_mask = attention_mask[expert_indices]
 
-                multiclass_logits = multiclass_model(expert_input_ids, expert_attention_mask)
+                expert_model_args = {"input_ids": expert_input_ids, "attention_mask": expert_attention_mask}
+
+                # 'token_type_ids'in var olup olmadığını (RoBERTa için) ve
+                # 'model_args'a eklenip eklenmediğini kontrol et
+                if "token_type_ids" in model_args:
+                    expert_token_type_ids = model_args["token_type_ids"][expert_indices]
+                    expert_model_args["token_type_ids"] = expert_token_type_ids
+
+                multiclass_logits = multiclass_model(**expert_model_args)
                 multiclass_preds_raw = torch.argmax(multiclass_logits, dim=1)
 
                 multiclass_class_names = multiclass_encoder.inverse_transform(multiclass_preds_raw.cpu().numpy())

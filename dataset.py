@@ -152,13 +152,26 @@ class CitationDataset(Dataset):
                 return_tensors="pt"
             )
 
-        return {
+        item = {
             "input_ids": encoding["input_ids"].squeeze(0),
             "attention_mask": encoding["attention_mask"].squeeze(0),
             "label": torch.tensor(label_id, dtype=torch.long),
             "section_id": torch.tensor(section_id, dtype=torch.long),
             "raw_text": text_context
         }
+
+        if "token_type_ids" in encoding:
+            item["token_type_ids"] = encoding["token_type_ids"].squeeze(0)
+
+        return item
+
+        #return {
+        #    "input_ids": encoding["input_ids"].squeeze(0),
+        #    "attention_mask": encoding["attention_mask"].squeeze(0),
+        #    "label": torch.tensor(label_id, dtype=torch.long),
+        #    "section_id": torch.tensor(section_id, dtype=torch.long),
+        #    "raw_text": text_context
+        #}
 
     def get_label_names(self):
         """train.py'nin ihtiyaç duyduğu etiket isimlerini döndürür."""
