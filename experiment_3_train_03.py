@@ -48,7 +48,7 @@ MODEL_NAMES = [
 ]
 
 COMET_PROJECT_NAME_PREFIX = "experiment-3-rich"
-COMET_WORKSPACE = "ulakbim-cic-train-accuracy"
+COMET_WORKSPACE = "ulakbim-cic-colab"
 COMET_ONLINE_MODE = True
 
 DATASET_PATH_TRAIN = "data/data_v2_train_ext.csv"
@@ -57,11 +57,11 @@ DATASET_PATH_TEST = "data/data_v2_test_ext.csv"
 
 DATA_OUTPUT_PATH = "checkpoints_v3"
 DATASET_INFO = False
-LOSS_FUNCTION = "CrossEntropyLoss"      # {CrossEntropyLoss, FocalLoss}
+LOSS_FUNCTION = "FocalLoss"      # {CrossEntropyLoss, FocalLoss}
 NUMBER_TRIALS = 20
 NUMBER_EPOCHS = 50
 DEFAULT_MODEL_INDEX = 0
-NUMBER_CPU = 8
+NUMBER_CPU = 0
 PATIENCE = 10
 # -----------------------------------------------------
 
