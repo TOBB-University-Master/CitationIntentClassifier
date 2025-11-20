@@ -1,0 +1,126 @@
+Kullanılan Cihaz: mps
+Değerlendirme Metriği: accuracy
+Validation Dosyası: data/data_v2_val.csv
+Test Dosyası: data/data_v2_test.csv
+Test Verisi Yüklendi: 550 satır
+--------------------------------------------------
+ Değerlendiriliyor: dbmdz/bert-base-turkish-cased
+--------------------------------------------------
+Seçilen En İyi Deneme: trial_2 (Ref Score: 0.7800)
+Model yükleniyor ve test ediliyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.7800
+Macro F1-Score: 0.6525
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.95      0.78      0.86       420
+       basis       0.57      0.92      0.70        74
+      differ       0.58      0.70      0.64        10
+     discuss       0.27      0.53      0.36        30
+     support       0.73      0.69      0.71        16
+
+    accuracy                           0.78       550
+   macro avg       0.62      0.72      0.65       550
+weighted avg       0.85      0.78      0.80       550
+
+--------------------------------------------------
+ Değerlendiriliyor: dbmdz/electra-base-turkish-cased-discriminator
+--------------------------------------------------
+Seçilen En İyi Deneme: trial_1 (Ref Score: 0.7800)
+Model yükleniyor ve test ediliyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.7800
+Macro F1-Score: 0.6592
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.95      0.79      0.86       420
+       basis       0.53      0.86      0.66        74
+      differ       1.00      0.60      0.75        10
+     discuss       0.31      0.57      0.40        30
+     support       0.58      0.69      0.63        16
+
+    accuracy                           0.78       550
+   macro avg       0.67      0.70      0.66       550
+weighted avg       0.85      0.78      0.80       550
+
+--------------------------------------------------
+ Değerlendiriliyor: xlm-roberta-base
+--------------------------------------------------
+Seçilen En İyi Deneme: trial_4 (Ref Score: 0.7600)
+Model yükleniyor ve test ediliyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.7600
+Macro F1-Score: 0.5828
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.94      0.77      0.85       420
+       basis       0.53      0.92      0.67        74
+      differ       0.60      0.60      0.60        10
+     discuss       0.23      0.40      0.29        30
+     support       0.50      0.50      0.50        16
+
+    accuracy                           0.76       550
+   macro avg       0.56      0.64      0.58       550
+weighted avg       0.83      0.76      0.78       550
+
+--------------------------------------------------
+ Değerlendiriliyor: microsoft/deberta-v3-base
+--------------------------------------------------
+Seçilen En İyi Deneme: trial_7 (Ref Score: 0.7273)
+Model yükleniyor ve test ediliyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.7273
+Macro F1-Score: 0.5834
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.92      0.73      0.82       420
+       basis       0.48      0.81      0.61        74
+      differ       0.46      0.60      0.52        10
+     discuss       0.25      0.57      0.35        30
+     support       0.69      0.56      0.62        16
+
+    accuracy                           0.73       550
+   macro avg       0.56      0.65      0.58       550
+weighted avg       0.81      0.73      0.75       550
+
+--------------------------------------------------
+ Değerlendiriliyor: answerdotai/ModernBERT-base
+--------------------------------------------------
+Seçilen En İyi Deneme: trial_7 (Ref Score: 0.6309)
+Model yükleniyor ve test ediliyor...
+
+--- TEST SONUÇLARI (HIYERARŞİK) ---
+Accuracy: 0.6309
+Macro F1-Score: 0.4503
+Sınıflandırma Raporu:
+              precision    recall  f1-score   support
+
+  background       0.91      0.65      0.75       420
+       basis       0.34      0.73      0.47        74
+      differ       0.60      0.30      0.40        10
+     discuss       0.17      0.37      0.23        30
+     support       0.33      0.50      0.40        16
+
+    accuracy                           0.63       550
+   macro avg       0.47      0.51      0.45       550
+weighted avg       0.77      0.63      0.67       550
+
+
+
+============================================================
+     TÜM MODELLERİN TEST ÖZETİ
+============================================================
+                              model_name  test_accuracy  test_macro_f1
+                 bert-base-turkish-cased       0.780000       0.652456
+electra-base-turkish-cased-discriminator       0.780000       0.659168
+                        xlm-roberta-base       0.760000       0.582824
+                         deberta-v3-base       0.727273       0.583413
+                         ModernBERT-base       0.630909       0.450315

@@ -1,222 +1,513 @@
+import argparse
+import os
+import sys
+import logging
+import pickle
+import pandas as pd
+import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import classification_report, accuracy_score
-from torch import Generator
-from torch.utils.data import DataLoader, random_split
-from transformers import get_scheduler, AutoTokenizer
-from torch.optim import AdamW
-
-from dataset import CitationDataset
-from model import BerturkClassifier
+import optuna
+from functools import partial
 from tqdm import tqdm
-import os
-import logging
-import json
-import pickle  # LabelEncoder ve SectionEncoder'ı kaydetmek için
 
-"""
-     Eğitim sürecindeki önemli bilgileri (epoch başlangıcı, kayıp değeri, doğruluk vb.) hem bir dosyaya (training.log) 
-     hem de konsola yazdırmak için bir loglama sistemi kurar
-"""
-def setup_logging():
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
+from transformers import get_scheduler, AutoTokenizer
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.utils.class_weight import compute_class_weight
+from comet_ml import Experiment, OfflineExperiment
+
+# Proje modülleri
+from config import Config
+from dataset import CitationDataset
+from generic_model import TransformerClassifier
+from FocalLoss import FocalLoss
+
+# Paralel tokenizasyon sorunlarını önlemek için
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
+
+# ==============================================================================
+#                      YARDIMCI FONKSİYONLAR (HELPER)
+# ==============================================================================
+
+def setup_logging(log_file):
+    """Loglama ayarlarını yapar."""
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    # Root logger'ı temizle (tekrarlı logları önlemek için)
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler("checkpoints/training.log", mode='a'),
-            logging.StreamHandler()
+            logging.FileHandler(log_file, mode='a'),
+            logging.StreamHandler(sys.stdout)
         ]
     )
 
 
+def get_criterion(loss_name, device, class_weights=None):
+    """Config'deki seçime göre Loss fonksiyonunu döndürür."""
+    if class_weights is not None:
+        weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
+    else:
+        weights_tensor = None
 
-"""
-    Modeli değerlendirir ve doğruluk ile sınıflandırma raporu döndürür.
-"""
-def evaluate(model, data_loader, device, label_names):
+    if loss_name == "FocalLoss":
+        return FocalLoss(alpha=weights_tensor, gamma=2.0)
+    elif loss_name == "CrossEntropyLoss_Weighted":
+        return nn.CrossEntropyLoss(weight=weights_tensor)
+    elif loss_name == "CrossEntropyLoss":
+        return nn.CrossEntropyLoss()
+    else:
+        logging.warning(f"Bilinmeyen loss: {loss_name}. Varsayılan FocalLoss kullanılıyor.")
+        return FocalLoss(alpha=weights_tensor, gamma=2.0)
+
+
+def train_one_epoch(model, loader, optimizer, scheduler, criterion, device, progress_desc):
+    """Tek bir epoch eğitimi yapar."""
+    model.train()
+    total_loss = 0
+    progress_bar = tqdm(loader, desc=progress_desc, leave=False)
+
+    for batch in progress_bar:
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        labels = batch["label"].to(device)
+
+        # Token type ids kontrolü (örn: BERT kullanıyorsa)
+        token_type_ids = batch.get("token_type_ids")
+        if token_type_ids is not None:
+            token_type_ids = token_type_ids.to(device)
+            logits = model(input_ids, attention_mask, token_type_ids=token_type_ids)
+        else:
+            logits = model(input_ids, attention_mask)
+
+        loss = criterion(logits, labels)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+
+        total_loss += loss.item()
+        progress_bar.set_postfix(loss=f"{loss.item():.4f}")
+
+    return total_loss / len(loader)
+
+
+def evaluate_standard(model, loader, device, criterion, label_names):
+    """Standart değerlendirme (Accuracy, F1, Loss)."""
     model.eval()
-    all_intent_preds = []
-    all_intent_labels = []
-    # Section tahminine dair değişkenler kaldırıldı
+    all_preds, all_labels = [], []
+    total_loss = 0
 
-    # Gradyan hesaplamalarını kapatır
-    # Değerlendirme yapılırken modelin ağırlıkları güncellenmez
     with torch.no_grad():
-        for batch in data_loader:
+        for batch in loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-            intent_labels = batch["label"].to(device)
-            section_ids = batch["section_id"].to(device)  # section_id'ler batch'ten alındı
+            labels = batch["label"].to(device)
 
-            # Modele section_ids'ler de girdi olarak verildi
-            intent_logits = model(input_ids, attention_mask, section_ids)
-            intent_preds = torch.argmax(intent_logits, dim=1)
+            token_type_ids = batch.get("token_type_ids")
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids.to(device)
+                logits = model(input_ids, attention_mask, token_type_ids=token_type_ids)
+            else:
+                logits = model(input_ids, attention_mask)
 
-            all_intent_preds.extend(intent_preds.cpu().numpy())
-            all_intent_labels.extend(intent_labels.cpu().numpy())
-            # Section ile ilgili tahminler ve metrikler kaldırıldı
+            if criterion:
+                loss = criterion(logits, labels)
+                total_loss += loss.item()
 
-    intent_acc = accuracy_score(all_intent_labels, all_intent_preds)
-    intent_report = classification_report(all_intent_labels, all_intent_preds, target_names=label_names,
-                                          zero_division=0)
+            preds = torch.argmax(logits, dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
 
-    # Sadece intent doğruluğu ve raporu döndürüldü
-    return intent_acc, intent_report
+    acc = accuracy_score(all_labels, all_preds)
+    report_dict = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0,
+                                        output_dict=True)
+    report_str = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0)
 
-    """
-        Args:
-            section_embed_dim (int): Tahmin edilecek section için embedding uzunluğu eklenmiştir
-    """
-def main():
-    config = {
-        "batch_size": 16,
-        "epochs": 20,
-        "lr": 2e-5,
-        "model_name": "dbmdz/bert-base-turkish-cased",
-        "checkpoint_path": "checkpoints/berturk_classifier_checkpoint.pt",
-        "best_model_path": "checkpoints/best_model.pt",
-        "seed": 42,
-        "section_embed_dim": 50  # section embedding boyutu
-    }
+    macro_f1 = report_dict['macro avg']['f1-score']
+    avg_loss = total_loss / len(loader) if len(loader) > 0 else 0
 
-    os.makedirs("checkpoints", exist_ok=True)
-    setup_logging()
+    return acc, macro_f1, avg_loss, report_str
 
+
+# ==============================================================================
+#                      EXPERIMENT 1: FLAT CLASSIFICATION
+# ==============================================================================
+
+def objective_flat(trial, model_name):
+    """Experiment 1 (Düz Sınıflandırma) için Optuna Objective Fonksiyonu."""
+
+    # --- 1. Ayarlar ---
+    model_short_name = Config.get_model_short_name(model_name)
+    output_dir = f"{Config.CHECKPOINT_DIR}/{model_short_name}/trial_{trial.number}/"
+    os.makedirs(output_dir, exist_ok=True)
+    setup_logging(os.path.join(output_dir, "training.log"))
+
+    # Hiperparametreler
+    lr = trial.suggest_float("lr", 1e-5, 5e-5, log=True)
+    batch_size = trial.suggest_categorical("batch_size", [16, 32])
+    warmup_ratio = trial.suggest_categorical("warmup_ratio", [0.05, 0.1])
+
+    # Cihaz
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    torch.manual_seed(config["seed"])
-    logging.info(f"Cihaz seçildi: {device}")
 
-    # Tokenizer
-    logging.info(f"Tokenizer yükleniyor: {config['model_name']}")
-    tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
-
-    # Dataset ve DataLoader
-    # CitationDataset'in tokenizer'ı __init__'te alacak şekilde güncellendiğini varsayıyoruz.
-    dataset = CitationDataset(tokenizer=tokenizer, mode="labeled", csv_path="data/train.csv")
-
-    num_labels = len(dataset.get_label_names())
-    num_sections = len(dataset.get_section_names())
-    logging.info(f"Toplam atıf niyeti sınıfı: {num_labels}")
-    logging.info(f"Toplam bölüm sınıfı: {num_sections}")  # Bölüm sayısını logla
-
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    generator = Generator().manual_seed(config["seed"])
-
-    # ------------------------------------------------------------
-    # TODO: Burada test için ayrılan data hep aynı mı kaldı ?
-    # ------------------------------------------------------------
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=generator)
-
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"])
-    logging.info(f"Veri seti yüklendi. Eğitim: {len(train_dataset)} örnek, Doğrulama: {len(val_dataset)} örnek.")
-
-    # Model, Optimizer, Scheduler
-    # Modele num_sections ve section_embed_dim parametreleri verildi
-    model = BerturkClassifier(model_name=config["model_name"],
-                              num_labels=num_labels,
-                              num_sections=num_sections,
-                              section_embed_dim=config["section_embed_dim"])
-
-    model.to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=config["lr"])
-    num_training_steps = len(train_loader) * config["epochs"]
-    lr_scheduler = get_scheduler("linear",
-                                 optimizer=optimizer,
-                                 num_warmup_steps=0,
-                                 num_training_steps=num_training_steps)
-
-    # Checkpoint kontrol
-    start_epoch = 0
-    best_val_acc = 0.0
-    if os.path.exists(config["checkpoint_path"]):
-        checkpoint = torch.load(config["checkpoint_path"], map_location=device)
-        # DİKKAT: Eğer önceki checkpoint eski model yapısından (iki çıktı) ise,
-        # bu model.load_state_dict() çağrısı hata verebilir.
-        # Bu durumda eski checkpoint dosyasını silip yeni eğitime başlamanız gerekebilir.
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        lr_scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-        start_epoch = checkpoint["epoch"] + 1
-        best_val_acc = checkpoint.get("best_val_acc", 0.0)
-        logging.info(f"Checkpoint yüklendi, {start_epoch}. epoch'tan devam ediliyor.")
+    # --- 2. Comet ML ---
+    if Config.COMET_ONLINE_MODE:
+        experiment = Experiment(api_key=Config.COMET_API_KEY, project_name=Config.COMET_PROJECT_NAME_PREFIX,
+                                workspace=Config.COMET_WORKSPACE)
     else:
-        logging.info("Yeni model eğitimi başlatılıyor.")
+        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME_PREFIX, workspace=Config.COMET_WORKSPACE,
+                                       log_dir=output_dir)
+
+    experiment.set_name(f"flat_trial_{trial.number}")
+    experiment.log_parameters({"lr": lr, "batch": batch_size, "model": model_name})
+
+    # --- 3. Veri Yükleme ---
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
+
+    logging.info("Veriler yükleniyor (Flat)...")
+    train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
+    val_df = pd.read_csv(Config.DATA_PATH_VAL)
+
+    # Dataset: Task=None (Düz)
+    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=train_df)
+    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=val_df)
+
+    num_labels = len(train_dataset.get_label_names())
+    label_names = train_dataset.get_label_names()
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=Config.NUMBER_CPU)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=Config.NUMBER_CPU)
+
+    # --- 4. Model & Loss ---
+    model = TransformerClassifier(model_name, num_labels=num_labels)
+    model.transformer.resize_token_embeddings(len(tokenizer))
+    model.to(device)
+
+    # Class Weights
+    train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
+    class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
+    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights)
+
+    optimizer = AdamW(model.parameters(), lr=lr)
+    num_steps = len(train_loader) * Config.NUMBER_EPOCHS
+    scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),num_training_steps=num_steps)
+
+    # --- 5. Eğitim Döngüsü ---
+    best_score = 0.0
+    epochs_no_improve = 0
+
+    for epoch in range(Config.NUMBER_EPOCHS):
+        avg_train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device,
+                                         f"Epoch {epoch + 1}")
+        acc, f1, avg_val_loss, report = evaluate_standard(model, val_loader, device, criterion, label_names)
+
+        logging.info(f"Epoch {epoch + 1} | Loss: {avg_val_loss:.4f} | Acc: {acc:.4f} | F1: {f1:.4f}")
+        experiment.log_metrics({"val_loss": avg_val_loss, "val_acc": acc, "val_f1": f1}, step=epoch + 1)
+
+        # Early Stopping (Config.EVALUATION_METRIC'e göre)
+        current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
+
+        if current_score > best_score:
+            best_score = current_score
+            epochs_no_improve = 0
+            torch.save(model.state_dict(), os.path.join(output_dir, "best_model.pt"))
+            # Tokenizer ve Encoder kaydet
+            tokenizer.save_pretrained(output_dir)
+            with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
+                pickle.dump(train_dataset.label_encoder, f)
+            logging.info(f"🚀 Yeni en iyi skor: {best_score:.4f}")
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve >= Config.PATIENCE:
+            logging.info("Erken durdurma tetiklendi.")
+            break
+
+    experiment.end()
+    return best_score
+
+
+# ==============================================================================
+#                      EXPERIMENT 2 & 3: HIERARCHICAL
+# ==============================================================================
+
+def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experiment, device):
+    """Binary veya Multiclass aşamasını eğitir."""
+    is_binary = (task_type == 'binary')
+
+    # Config'den parametreleri çek
+    lr = trial.suggest_float(f"lr_{task_type}", 1e-5, 5e-5, log=True)
+    warmup_ratio = trial.suggest_categorical(f"warmup_{task_type}", [0.05, 0.1])
+    epochs = Config.NUMBER_EPOCHS
+
+    output_dir = os.path.join(config["output_dir_base"], task_type)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Logger ayarla (stage özelinde)
+    stage_logger = logging.getLogger(f"{task_type}_logger")
+    fh = logging.FileHandler(os.path.join(output_dir, "training.log"), mode='w')
+    stage_logger.addHandler(fh)
+    stage_logger.setLevel(logging.INFO)
+
+    logging.info(f"--- {task_type.upper()} Eğitimi Başlıyor ---")
+
+    tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
+    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
+
+    # Dataset Oluşturma (Exp 3 için context kontrolü burada yapılır)
+    # Eğer Exp 3 ise include_section_in_input=True
+    use_context = (Config.EXPERIMENT_ID == 3)
+
+    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
+                                    data_frame=train_df, task=task_type, include_section_in_input=use_context)
+    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
+                                  data_frame=val_df, task=task_type, include_section_in_input=use_context)
+
+    # Label Encoder Kaydet
+    with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
+        pickle.dump(train_dataset.label_encoder, f)
+
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,
+                              num_workers=Config.NUMBER_CPU)
+    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
+
+    # Model ve Loss
+    num_labels = len(train_dataset.get_label_names())
+    model = TransformerClassifier(config["model_name"], num_labels=num_labels)
+    model.transformer.resize_token_embeddings(len(tokenizer))
+    model.to(device)
+
+    train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
+    class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
+    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights)
+
+    optimizer = AdamW(model.parameters(), lr=lr)
+    num_steps = len(train_loader) * epochs
+    scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),
+                              num_training_steps=num_steps)
 
     # Eğitim Döngüsü
-    for epoch in range(start_epoch, config["epochs"]):
-        model.train()
-        total_loss = 0
+    best_score = 0.0
+    epochs_no_improve = 0
+    best_model_path = os.path.join(output_dir, "best_model.pt")
 
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{config['epochs']}", leave=False)
-        for batch in progress_bar:
+    for epoch in range(epochs):
+        loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device,
+                               f"{task_type} Epoch {epoch + 1}")
+        acc, f1, val_loss, _ = evaluate_standard(model, val_loader, device, criterion, train_dataset.get_label_names())
+
+        logging.info(f"[{task_type}] Epoch {epoch + 1} | Loss: {val_loss:.4f} | Acc: {acc:.4f}")
+        experiment.log_metrics({f"{task_type}_val_acc": acc, f"{task_type}_val_loss": val_loss}, step=epoch + 1)
+
+        current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
+
+        if current_score > best_score:
+            best_score = current_score
+            epochs_no_improve = 0
+            torch.save(model.state_dict(), best_model_path)
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve >= Config.PATIENCE:
+            logging.info(f"[{task_type}] Erken durdurma.")
+            break
+
+    return best_score, best_model_path
+
+
+def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model_path, multiclass_model_path,
+                               binary_enc_path, multiclass_enc_path):
+    """Test seti üzerinde hiyerarşik değerlendirme."""
+    logging.info("--- Hiyerarşik Test Başlıyor ---")
+
+    tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
+    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
+
+    # Encoders Yükle
+    with open(binary_enc_path, "rb") as f:
+        bin_enc = pickle.load(f)
+    with open(multiclass_enc_path, "rb") as f:
+        multi_enc = pickle.load(f)
+
+    # Modelleri Yükle
+    bin_model = TransformerClassifier(config["model_name"], num_labels=len(bin_enc.classes_))
+    bin_model.transformer.resize_token_embeddings(len(tokenizer))
+    bin_model.load_state_dict(torch.load(binary_model_path, map_location=device))
+    bin_model.to(device);
+    bin_model.eval()
+
+    multi_model = TransformerClassifier(config["model_name"], num_labels=len(multi_enc.classes_))
+    multi_model.transformer.resize_token_embeddings(len(tokenizer))
+    multi_model.load_state_dict(torch.load(multiclass_model_path, map_location=device))
+    multi_model.to(device);
+    multi_model.eval()
+
+    # Test Dataset
+    use_context = (Config.EXPERIMENT_ID == 3)
+    test_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
+                                   data_frame=test_df, task="all", include_section_in_input=use_context)
+    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
+
+    # Tahmin Mantığı
+    non_bg_id = bin_enc.transform(['non-background'])[0]
+    bg_orig_id = test_dataset.label_encoder.transform(['background'])[0]
+
+    all_preds, all_labels = [], []
+
+    with torch.no_grad():
+        for batch in test_loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-            intent_labels = batch["label"].to(device)
-            section_ids = batch["section_id"].to(device)  # section_id'ler alındı
+            labels = batch["label"].to(device)
 
-            # Modele section_ids'ler de girdi olarak verildi
-            intent_logits = model(input_ids, attention_mask, section_ids)
+            # 1. Binary
+            bin_logits = bin_model(input_ids, attention_mask)
+            bin_preds = torch.argmax(bin_logits, dim=1)
 
-            # Sadece intent kaybı hesaplandı
-            # CrossEntropyLoss()
-            loss = criterion(intent_logits, intent_labels)
+            final_preds = torch.zeros_like(bin_preds)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
+            # 2. Expert (Non-Background)
+            expert_indices = (bin_preds == non_bg_id).nonzero(as_tuple=True)[0]
+            if len(expert_indices) > 0:
+                exp_in = input_ids[expert_indices]
+                exp_att = attention_mask[expert_indices]
+                multi_logits = multi_model(exp_in, exp_att)
+                multi_preds_raw = torch.argmax(multi_logits, dim=1)
 
-            total_loss += loss.item()
-            progress_bar.set_postfix(loss=f"{total_loss / (progress_bar.n + 1):.4f}")
+                # ID Mapping
+                class_names = multi_enc.inverse_transform(multi_preds_raw.cpu().numpy())
+                orig_ids = test_dataset.label_encoder.transform(class_names)
+                final_preds[expert_indices] = torch.tensor(orig_ids, device=device)
 
-        avg_train_loss = total_loss / len(train_loader)
-        logging.info(f"Epoch {epoch + 1} Tamamlandı. Ortalama Eğitim Kaybı: {avg_train_loss:.4f}")
+            # 3. Background
+            bg_indices = (bin_preds != non_bg_id).nonzero(as_tuple=True)[0]
+            final_preds[bg_indices] = bg_orig_id
 
-        # Doğrulama
-        # evaluate çağrısı ve sonuçların kullanımı güncellendi
-        intent_val_acc, intent_report = evaluate(
-            model, val_loader, device, dataset.get_label_names()
-        )
-        logging.info(f"Doğrulama Başarımı (Intent Accuracy): {intent_val_acc:.4f}")
-        logging.info(f"Intent Sınıflandırma Raporu:\n{intent_report}")
-        # Section ile ilgili loglar kaldırıldı
+            all_preds.extend(final_preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
 
-        # Checkpoint'i her zaman kaydet
-        checkpoint_data = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": lr_scheduler.state_dict(),
-            "best_val_acc": best_val_acc  # Bu hala intent acc'yi takip ediyor
-        }
-        torch.save(checkpoint_data, config["checkpoint_path"])
+    acc = accuracy_score(all_labels, all_preds)
+    macro_f1 = classification_report(all_labels, all_preds, output_dict=True, zero_division=0)['macro avg']['f1-score']
 
-        # Sadece en iyi modeli ayrı bir dosyaya kaydet (intent accuracy'ye göre)
-        if intent_val_acc > best_val_acc:
-            best_val_acc = intent_val_acc
-            logging.info(f"🚀 Yeni en iyi doğrulama başarımı (Intent): {best_val_acc:.4f}. En iyi model kaydediliyor...")
-            torch.save(model.state_dict(), config["best_model_path"])
+    logging.info(f"🏆 TEST SKORU - Acc: {acc:.4f} | F1: {macro_f1:.4f}")
+    experiment.log_metrics({"test_acc": acc, "test_f1": macro_f1})
 
-    # Eğitim sonrası kayıt
-    logging.info("\nEğitim tamamlandı.")
-    logging.info("En son tokenizer yapılandırması kaydediliyor...")
-    tokenizer.save_pretrained(os.path.dirname(config["best_model_path"]))
+    return acc if Config.EVALUATION_METRIC == "accuracy" else macro_f1
 
-    # LabelEncoder ve SectionEncoder'ı da kaydet (tahmin aşamasında lazım olacak)
-    with open(os.path.join(os.path.dirname(config["best_model_path"]), "label_encoder.pkl"), "wb") as f:
-        pickle.dump(dataset.label_encoder, f)
-    with open(os.path.join(os.path.dirname(config["best_model_path"]), "section_encoder.pkl"), "wb") as f:
-        pickle.dump(dataset.section_encoder, f)
 
-    # Config'i de kaydet
-    config_path = os.path.join(os.path.dirname(config["best_model_path"]), "config.json")
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=4)
+def objective_hierarchical(trial, model_name):
+    """Experiment 2 ve 3 için ortak Objective (Hiyerarşik)."""
 
-    logging.info("İşlem bitti.")
+    model_short_name = Config.get_model_short_name(model_name)
+    output_dir_base = f"{Config.CHECKPOINT_DIR}/{model_short_name}/trial_{trial.number}/"
+    os.makedirs(output_dir_base, exist_ok=True)
+    setup_logging(os.path.join(output_dir_base, "trial.log"))
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    batch_size = trial.suggest_categorical("batch_size", [16, 32])
+
+    # Config Dictionary
+    config = {
+        "model_name": model_name,
+        "output_dir_base": output_dir_base,
+        "batch_size": batch_size
+    }
+
+    # Comet
+    if Config.COMET_ONLINE_MODE:
+        experiment = Experiment(api_key=Config.COMET_API_KEY, project_name=Config.COMET_PROJECT_NAME_PREFIX,
+                                workspace=Config.COMET_WORKSPACE)
+    else:
+        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME_PREFIX, workspace=Config.COMET_WORKSPACE,
+                                       log_dir=output_dir_base)
+
+    experiment.set_name(f"hierarchical_trial_{trial.number}")
+    experiment.log_parameters(trial.params)
+
+    # Veri Yükleme
+    train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
+    val_df = pd.read_csv(Config.DATA_PATH_VAL)
+    test_df = pd.read_csv(Config.DATA_PATH_TEST)
+
+    # 1. Binary Model Eğitimi
+    _, bin_model_path = run_hierarchical_stage("binary", config, trial, train_df, val_df, experiment, device)
+
+    # 2. Multiclass Model Eğitimi
+    _, multi_model_path = run_hierarchical_stage("multiclass", config, trial, train_df, val_df, experiment, device)
+
+    # 3. Birleşik Test
+    bin_enc_path = os.path.join(output_dir_base, "binary/label_encoder.pkl")
+    multi_enc_path = os.path.join(output_dir_base, "multiclass/label_encoder.pkl")
+
+    final_score = evaluate_hierarchical_test(config, experiment, test_df, device,
+                                             bin_model_path, multi_model_path,
+                                             bin_enc_path, multi_enc_path)
+
+    # Tokenizer kaydet (trial root)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
+    tokenizer.save_pretrained(output_dir_base)
+
+    experiment.end()
+    return final_score
+
+
+# ==============================================================================
+#                      MAIN
+# ==============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="Unified Training Script")
+    parser.add_argument("--experiment_id", type=int, default=1, help="1: Flat, 2: Hierarchical, 3: Context-Aware")
+    parser.add_argument("--model_index", type=int, default=0, help="Index of the model in Config.MODELS")
+    args = parser.parse_args()
+
+    # 1. Config Ayarla
+    try:
+        Config.set_experiment(args.experiment_id)
+        Config.print_config()
+    except ValueError as e:
+        print(f"Hata: {e}")
+        sys.exit(1)
+
+    model_name = Config.MODELS[args.model_index]
+    print(f"🚀 Seçilen Model: {model_name}")
+
+    # 2. Study Oluştur
+    model_short_name = Config.get_model_short_name(model_name)
+    db_path = Config.get_optuna_db_path(model_name)
+    storage = f"sqlite:///{db_path}"
+
+    study_name = f"{model_short_name}_exp{args.experiment_id}_study"
+
+    study = optuna.create_study(study_name=study_name, storage=storage, load_if_exists=True, direction="maximize")
+
+    # 3. Doğru Objective'i Seç
+    if args.experiment_id == 1:
+        objective_func = partial(objective_flat, model_name=model_name)
+    elif args.experiment_id in [2, 3]:
+        objective_func = partial(objective_hierarchical, model_name=model_name)
+    else:
+        print("Geçersiz Experiment ID")
+        sys.exit(1)
+
+    # 4. Optimizasyonu Başlat
+    print("Optimizasyon Başlıyor...")
+    study.optimize(objective_func, n_trials=Config.NUMBER_TRIALS)
+
+    print("✅ En İyi Sonuç:")
+    print(f"  Trial: {study.best_trial.number}")
+    print(f"  Skor: {study.best_value:.4f}")
+    print(f"  Params: {study.best_params}")
 
 
 if __name__ == "__main__":
