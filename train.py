@@ -127,8 +127,7 @@ def evaluate_standard(model, loader, device, criterion, label_names):
             all_labels.extend(labels.cpu().numpy())
 
     acc = accuracy_score(all_labels, all_preds)
-    report_dict = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0,
-                                        output_dict=True)
+    report_dict = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0,output_dict=True)
     report_str = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0)
 
     macro_f1 = report_dict['macro avg']['f1-score']
@@ -154,9 +153,21 @@ def objective_flat(trial, model_name):
     lr = trial.suggest_float("lr", 1e-5, 5e-5, log=True)
     batch_size = trial.suggest_categorical("batch_size", [16, 32])
     warmup_ratio = trial.suggest_categorical("warmup_ratio", [0.05, 0.1])
+    weight_decay = trial.suggest_float("weight_decay", 0.0, 0.1)
+
+    config_dict = {
+        "model_name": model_name,
+        "batch_size": batch_size,
+        "max_len": Config.MAX_LEN
+    }
 
     # Cihaz
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
 
     # --- 2. Comet ML ---
     if Config.COMET_ONLINE_MODE:
@@ -166,8 +177,14 @@ def objective_flat(trial, model_name):
         experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME_PREFIX, workspace=Config.COMET_WORKSPACE,
                                        log_dir=output_dir)
 
-    experiment.set_name(f"flat_trial_{trial.number}")
-    experiment.log_parameters({"lr": lr, "batch": batch_size, "model": model_name})
+    experiment.set_name(f"trial_{trial.number}")
+    experiment.log_parameters({
+        "lr": lr,
+        "batch_size": batch_size,
+        "model": model_name,
+        "weight_decay": weight_decay,
+        "optimizer": "AdamW"
+    })
 
     # --- 3. Veri Yükleme ---
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -176,6 +193,7 @@ def objective_flat(trial, model_name):
     logging.info("Veriler yükleniyor (Flat)...")
     train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
     val_df = pd.read_csv(Config.DATA_PATH_VAL)
+    test_df = pd.read_csv(Config.DATA_PATH_TEST)
 
     # Dataset: Task=None (Düz)
     train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=train_df)
@@ -197,18 +215,21 @@ def objective_flat(trial, model_name):
     class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
     criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights)
 
-    optimizer = AdamW(model.parameters(), lr=lr)
+    # Optimizer
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    # Scheduler
     num_steps = len(train_loader) * Config.NUMBER_EPOCHS
     scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),num_training_steps=num_steps)
 
     # --- 5. Eğitim Döngüsü ---
     best_score = 0.0
     epochs_no_improve = 0
-
+    best_model_path = os.path.join(output_dir, "best_model.pt")
+    encoder_path = os.path.join(output_dir, "label_encoder.pkl")
     for epoch in range(Config.NUMBER_EPOCHS):
-        avg_train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device,
-                                         f"Epoch {epoch + 1}")
-        acc, f1, avg_val_loss, report = evaluate_standard(model, val_loader, device, criterion, label_names)
+        avg_train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device,f"Epoch {epoch + 1}")
+        acc, f1, avg_val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, label_names)
 
         logging.info(f"Epoch {epoch + 1} | Loss: {avg_val_loss:.4f} | Acc: {acc:.4f} | F1: {f1:.4f}")
         experiment.log_metrics({"val_loss": avg_val_loss, "val_acc": acc, "val_f1": f1}, step=epoch + 1)
@@ -225,6 +246,7 @@ def objective_flat(trial, model_name):
             with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
                 pickle.dump(train_dataset.label_encoder, f)
             logging.info(f"🚀 Yeni en iyi skor: {best_score:.4f}")
+            experiment.log_text(f"best_val_report_epoch_{epoch + 1}.txt", val_report)
         else:
             epochs_no_improve += 1
 
@@ -232,7 +254,23 @@ def objective_flat(trial, model_name):
             logging.info("Erken durdurma tetiklendi.")
             break
 
+    if os.path.exists(best_model_path):
+        logging.info(f"En iyi model yükleniyor ve test ediliyor: {best_model_path}")
+        test_score = evaluate_flat_test(
+            config=config_dict,
+            experiment=experiment,
+            test_df=test_df,
+            device=device,
+            model_path=best_model_path,
+            encoder_path=encoder_path
+        )
+
+        logging.info(f"DENEME {trial.number} SONUCU -> Val Score: {best_score:.4f} | Test Score: {test_score:.4f}")
+    else:
+        logging.warning("Best model bulunamadı, test adımı atlanıyor.")
+
     experiment.end()
+
     return best_score
 
 
@@ -247,6 +285,7 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     # Config'den parametreleri çek
     lr = trial.suggest_float(f"lr_{task_type}", 1e-5, 5e-5, log=True)
     warmup_ratio = trial.suggest_categorical(f"warmup_{task_type}", [0.05, 0.1])
+    weight_decay = trial.suggest_float(f"weight_decay_{task_type}", 0.0, 0.1)
     epochs = Config.NUMBER_EPOCHS
 
     output_dir = os.path.join(config["output_dir_base"], task_type)
@@ -267,17 +306,14 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     # Eğer Exp 3 ise include_section_in_input=True
     use_context = (Config.EXPERIMENT_ID == 3)
 
-    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
-                                    data_frame=train_df, task=task_type, include_section_in_input=use_context)
-    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
-                                  data_frame=val_df, task=task_type, include_section_in_input=use_context)
+    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=train_df, task=task_type, include_section_in_input=use_context)
+    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=val_df, task=task_type, include_section_in_input=use_context)
 
     # Label Encoder Kaydet
     with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
         pickle.dump(train_dataset.label_encoder, f)
 
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,
-                              num_workers=Config.NUMBER_CPU)
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,num_workers=Config.NUMBER_CPU)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
 
     # Model ve Loss
@@ -290,10 +326,9 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
     criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights)
 
-    optimizer = AdamW(model.parameters(), lr=lr)
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     num_steps = len(train_loader) * epochs
-    scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),
-                              num_training_steps=num_steps)
+    scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),num_training_steps=num_steps)
 
     # Eğitim Döngüsü
     best_score = 0.0
@@ -301,9 +336,8 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     best_model_path = os.path.join(output_dir, "best_model.pt")
 
     for epoch in range(epochs):
-        loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device,
-                               f"{task_type} Epoch {epoch + 1}")
-        acc, f1, val_loss, _ = evaluate_standard(model, val_loader, device, criterion, train_dataset.get_label_names())
+        loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device, f"{task_type} Epoch {epoch + 1}")
+        acc, f1, val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, train_dataset.get_label_names())
 
         logging.info(f"[{task_type}] Epoch {epoch + 1} | Loss: {val_loss:.4f} | Acc: {acc:.4f}")
         experiment.log_metrics({f"{task_type}_val_acc": acc, f"{task_type}_val_loss": val_loss}, step=epoch + 1)
@@ -314,6 +348,9 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
             best_score = current_score
             epochs_no_improve = 0
             torch.save(model.state_dict(), best_model_path)
+
+            experiment.log_text(f"epoch_{epoch + 1}_best_report_{task_type}.txt", val_report)
+            experiment.log_metric(f"best_validation_{Config.EVALUATION_METRIC}_{task_type}", best_score, step=epoch + 1)
         else:
             epochs_no_improve += 1
 
@@ -324,8 +361,100 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     return best_score, best_model_path
 
 
-def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model_path, multiclass_model_path,
-                               binary_enc_path, multiclass_enc_path):
+def evaluate_flat_test(config, experiment, test_df, device, model_path, encoder_path):
+    """
+    Flat model için Test seti değerlendirmesi, Confusion Matrix ve Hata Analizi.
+    """
+    logging.info("--- Flat Test Değerlendirmesi Başlıyor ---")
+
+    # 1. Tokenizer ve Model Hazırlığı
+    tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
+    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
+
+    # Encoder Yükle
+    with open(encoder_path, "rb") as f:
+        label_encoder = pickle.load(f)
+    label_names = label_encoder.classes_
+
+    # Modeli Yükle
+    model = TransformerClassifier(config["model_name"], num_labels=len(label_names))
+    model.transformer.resize_token_embeddings(len(tokenizer))
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
+    model.eval()
+
+    # Dataset Oluştur (Exp 3 ise context ekle)
+    use_context = (Config.EXPERIMENT_ID == 3)
+    test_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
+                                   data_frame=test_df, task=None, include_section_in_input=use_context)
+    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
+
+    all_preds, all_labels = [], []
+    misclassified_samples = []  # Hatalı örnekleri saklar
+
+    with torch.no_grad():
+        for i, batch in enumerate(test_loader):
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["label"].to(device)
+
+            logits = model(input_ids, attention_mask)
+            preds = torch.argmax(logits, dim=1)
+
+            current_preds = preds.cpu().numpy()
+            current_labels = labels.cpu().numpy()
+
+            all_preds.extend(current_preds)
+            all_labels.extend(current_labels)
+
+            # --- Hatalı Tahminleri Yakala ---
+            # Batch içindeki her bir örnek için kontrol et
+            for idx, (p, l) in enumerate(zip(current_preds, current_labels)):
+                if p != l:
+                    # Orijinal metni geri çöz (decode)
+                    raw_text = tokenizer.decode(input_ids[idx], skip_special_tokens=True)
+                    misclassified_samples.append({
+                        "text": raw_text[:500],
+                        "true_label": label_names[l],
+                        "predicted_label": label_names[p]
+                    })
+
+    # Metrikler
+    acc = accuracy_score(all_labels, all_preds)
+    report_dict = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0,
+                                        output_dict=True)
+    report_str = classification_report(all_labels, all_preds, target_names=label_names, zero_division=0)
+    macro_f1 = report_dict['macro avg']['f1-score']
+
+    logging.info(f"🏆 FLAT TEST SKORU - Acc: {acc:.4f} | F1: {macro_f1:.4f}")
+    experiment.log_metrics({"test_acc": acc, "test_f1": macro_f1})
+    experiment.log_text("test_classification_report.txt", report_str)
+
+    # --- 1. Confusion Matrix Gönder ---
+    try:
+        experiment.log_confusion_matrix(
+            y_true=all_labels,
+            y_predicted=all_preds,
+            labels=list(label_names),
+            title=f"Test Confusion Matrix (Flat)",
+            file_name="test_confusion_matrix.json"
+        )
+    except Exception as e:
+        logging.warning(f"Confusion Matrix loglanamadı: {e}")
+
+    # --- 2. Hatalı Tahminleri Tablo Olarak Gönder (CSV) ---
+    if misclassified_samples:
+        df_errors = pd.DataFrame(misclassified_samples)
+        # CSV olarak kaydet ve logla
+        error_csv_path = os.path.join(os.path.dirname(model_path), "flat_misclassified_samples.csv")
+        df_errors.to_csv(error_csv_path, index=False)
+        experiment.log_table(filename="flat_misclassified_samples.csv", tabular_data=df_errors)
+        logging.info(f"Hatalı tahmin edilen {len(df_errors)} örnek 'flat_misclassified_samples.csv' olarak yüklendi.")
+
+    return acc if Config.EVALUATION_METRIC == "accuracy" else macro_f1
+
+
+def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model_path, multiclass_model_path, binary_enc_path, multiclass_enc_path):
     """Test seti üzerinde hiyerarşik değerlendirme."""
     logging.info("--- Hiyerarşik Test Başlıyor ---")
 
@@ -353,8 +482,7 @@ def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model
 
     # Test Dataset
     use_context = (Config.EXPERIMENT_ID == 3)
-    test_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
-                                   data_frame=test_df, task="all", include_section_in_input=use_context)
+    test_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=test_df, task="all", include_section_in_input=use_context)
     test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
 
     # Tahmin Mantığı
@@ -362,6 +490,7 @@ def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model
     bg_orig_id = test_dataset.label_encoder.transform(['background'])[0]
 
     all_preds, all_labels = [], []
+    misclassified_samples = []
 
     with torch.no_grad():
         for batch in test_loader:
@@ -392,14 +521,57 @@ def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model
             bg_indices = (bin_preds != non_bg_id).nonzero(as_tuple=True)[0]
             final_preds[bg_indices] = bg_orig_id
 
+            # Batch bazında hatalı tahminleri yakalama döngüsü
+            curr_preds_np = final_preds.cpu().numpy()
+            curr_labels_np = labels.cpu().numpy()
+            label_classes = test_dataset.label_encoder.classes_
+
+            for idx, (p, l) in enumerate(zip(curr_preds_np, curr_labels_np)):
+                if p != l:
+                    # Metni geri çöz (Token ID -> Text)
+                    raw_text = tokenizer.decode(input_ids[idx], skip_special_tokens=True)
+                    misclassified_samples.append({
+                        "text": raw_text[:500],  # Çok uzunsa kırpılabilir
+                        "true_label": label_classes[l],
+                        "predicted_label": label_classes[p]
+                    })
+
             all_preds.extend(final_preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
     acc = accuracy_score(all_labels, all_preds)
+    report_dict = classification_report(all_labels, all_preds, output_dict=True, zero_division=0)
+    report_str = classification_report(all_labels, all_preds, output_dict=False, zero_division=0)
     macro_f1 = classification_report(all_labels, all_preds, output_dict=True, zero_division=0)['macro avg']['f1-score']
 
     logging.info(f"🏆 TEST SKORU - Acc: {acc:.4f} | F1: {macro_f1:.4f}")
+
     experiment.log_metrics({"test_acc": acc, "test_f1": macro_f1})
+    experiment.log_text("combined_hierarchical_test_report.txt", report_str)
+
+    # Hatalı Tahminleri CSV Yapıp Tablo Olarak Yükleme
+    if misclassified_samples:
+        df_errors = pd.DataFrame(misclassified_samples)
+
+        # Diske kaydetmek isterseniz (Opsiyonel):
+        error_csv_path = os.path.join(os.path.dirname(binary_model_path), "../hierarchical_misclassified_samples.csv")
+        os.makedirs(os.path.dirname(error_csv_path), exist_ok=True)
+        df_errors.to_csv(error_csv_path, index=False)
+
+        # Comet'e yükle
+        experiment.log_table(filename="hierarchical_misclassified_samples.csv", tabular_data=df_errors)
+        logging.info(f"Hatalı tahmin edilen {len(df_errors)} örnek Comet'e yüklendi.")
+
+    try:
+        experiment.log_confusion_matrix(
+            y_true=all_labels,
+            y_predicted=all_preds,
+            labels=test_dataset.get_label_names(),
+            title=f"Test Confusion Matrix (Exp {Config.EXPERIMENT_ID})",
+            file_name="test_confusion_matrix.json"
+        )
+    except Exception as e:
+        logging.warning(f"Confusion Matrix loglanamadı: {e}")
 
     return acc if Config.EVALUATION_METRIC == "accuracy" else macro_f1
 
@@ -412,7 +584,13 @@ def objective_hierarchical(trial, model_name):
     os.makedirs(output_dir_base, exist_ok=True)
     setup_logging(os.path.join(output_dir_base, "trial.log"))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
     batch_size = trial.suggest_categorical("batch_size", [16, 32])
 
     # Config Dictionary
@@ -424,10 +602,12 @@ def objective_hierarchical(trial, model_name):
 
     # Comet
     if Config.COMET_ONLINE_MODE:
-        experiment = Experiment(api_key=Config.COMET_API_KEY, project_name=Config.COMET_PROJECT_NAME_PREFIX,
+        experiment = Experiment(api_key=Config.COMET_API_KEY,
+                                project_name=Config.COMET_PROJECT_NAME_PREFIX,
                                 workspace=Config.COMET_WORKSPACE)
     else:
-        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME_PREFIX, workspace=Config.COMET_WORKSPACE,
+        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME_PREFIX,
+                                       workspace=Config.COMET_WORKSPACE,
                                        log_dir=output_dir_base)
 
     experiment.set_name(f"hierarchical_trial_{trial.number}")
