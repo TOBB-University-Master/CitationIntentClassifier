@@ -144,7 +144,7 @@ class Config:
         if not name:
             raise ValueError("Model seçili değil!")
         short_name = cls.get_model_short_name(name)
-        return os.path.join(cls.CHECKPOINT_DIR, f"{short_name}_refined.db")
+        return os.path.join(cls.CHECKPOINT_DIR, f"{short_name}.db")
 
     @classmethod
     def ensure_directories(cls):
