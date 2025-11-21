@@ -183,7 +183,10 @@ def objective_flat(trial, model_name):
         "batch_size": batch_size,
         "model": model_name,
         "weight_decay": weight_decay,
-        "optimizer": "AdamW"
+        "optimizer": "AdamW",
+        "patience": Config.PATIENCE,
+        "seed": Config.SEED,
+        "max_len": Config.MAX_LEN
     })
 
     # --- 3. Veri Yükleme ---
@@ -232,7 +235,12 @@ def objective_flat(trial, model_name):
         acc, f1, avg_val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, label_names)
 
         logging.info(f"Epoch {epoch + 1} | Loss: {avg_val_loss:.4f} | Acc: {acc:.4f} | F1: {f1:.4f}")
-        experiment.log_metrics({"val_loss": avg_val_loss, "val_acc": acc, "val_f1": f1}, step=epoch + 1)
+        experiment.log_metrics({
+            "train_loss": avg_train_loss,
+            "val_loss": avg_val_loss,
+            "val_acc": acc,
+            "val_f1": f1
+        }, step=epoch + 1)
 
         # Early Stopping (Config.EVALUATION_METRIC'e göre)
         current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
@@ -336,11 +344,16 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     best_model_path = os.path.join(output_dir, "best_model.pt")
 
     for epoch in range(epochs):
-        loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device, f"{task_type} Epoch {epoch + 1}")
+        train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device, f"{task_type} Epoch {epoch + 1}")
         acc, f1, val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, train_dataset.get_label_names())
 
         logging.info(f"[{task_type}] Epoch {epoch + 1} | Loss: {val_loss:.4f} | Acc: {acc:.4f}")
-        experiment.log_metrics({f"{task_type}_val_acc": acc, f"{task_type}_val_loss": val_loss}, step=epoch + 1)
+        experiment.log_metrics({
+            f"{task_type}_train_loss": train_loss,
+            f"{task_type}_val_acc": acc,
+            f"{task_type}_val_f1": f1,
+            f"{task_type}_val_loss": val_loss
+        }, step=epoch + 1)
 
         current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
 
@@ -612,6 +625,13 @@ def objective_hierarchical(trial, model_name):
 
     experiment.set_name(f"hierarchical_trial_{trial.number}")
     experiment.log_parameters(trial.params)
+    experiment.log_parameters({
+        "model_name": config["model_name"],
+        "patience": Config.PATIENCE,
+        "seed": Config.SEED,
+        "max_len": Config.MAX_LEN,
+        "optimizer": "AdamW"
+    })
 
     # Veri Yükleme
     train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
@@ -619,10 +639,12 @@ def objective_hierarchical(trial, model_name):
     test_df = pd.read_csv(Config.DATA_PATH_TEST)
 
     # 1. Binary Model Eğitimi
-    _, bin_model_path = run_hierarchical_stage("binary", config, trial, train_df, val_df, experiment, device)
+    best_bin_score, bin_model_path = run_hierarchical_stage("binary", config, trial, train_df, val_df, experiment, device)
+    experiment.log_metric("final_binary_best_score", best_bin_score)
 
     # 2. Multiclass Model Eğitimi
-    _, multi_model_path = run_hierarchical_stage("multiclass", config, trial, train_df, val_df, experiment, device)
+    best_multi_score, multi_model_path = run_hierarchical_stage("multiclass", config, trial, train_df, val_df, experiment, device)
+    experiment.log_metric("final_multiclass_best_score", best_multi_score)
 
     # 3. Birleşik Test
     bin_enc_path = os.path.join(output_dir_base, "binary/label_encoder.pkl")
