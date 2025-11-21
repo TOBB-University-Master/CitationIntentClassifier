@@ -14,7 +14,7 @@ class Config:
     ]
 
     COMET_API_KEY = "LrkBSXNSdBGwikgVrzE2m73iw"
-    COMET_WORKSPACE = "ulakbim-cic-colab-v1"
+    COMET_WORKSPACE = "ulakbim-cic-colab-v101"
     COMET_ONLINE_MODE = True
 
     # Eğitim Parametreleri
