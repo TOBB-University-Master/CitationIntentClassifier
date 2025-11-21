@@ -36,21 +36,26 @@ class Config:
     # ==========================================================================
     # 2. DENEY YAPILANDIRMASI (EXPERIMENT ID)
     # ==========================================================================
-    # Buradaki değeri değiştirerek (1, 2 veya 3) tüm ayarları güncelleyebilirsiniz.
     EXPERIMENT_ID = 1
+    MODEL_INDEX = 0
 
-    # Başlangıçta boş tanımlıyoruz, _setup() metodu bunları dolduracak
+    ACTIVE_MODEL_NAME = None
     PREFIX_DIR = ""
+
+    # Dinamik Yollar (set_experiment ve set_model ile dolar)
     CHECKPOINT_DIR = ""
     RESULTS_DIR = ""
     DATA_PATH_TRAIN = ""
     DATA_PATH_VAL = ""
     DATA_PATH_TEST = ""
-    COMET_PROJECT_NAME_PREFIX = ""
+
+    # Comet İsimlendirme
+    COMET_PROJECT_PREFIX = ""   # örn: experiment-1
+    COMET_PROJECT_NAME = ""     # örn: experiment-1-bert-base
 
     @classmethod
-    def _setup(cls):
-        """EXPERIMENT_ID değerine göre tüm yolları dinamik olarak ayarlar."""
+    def _setup_paths(cls):
+        """EXPERIMENT_ID değerine göre klasör ve veri yollarını ayarlar."""
         exp_id = int(cls.EXPERIMENT_ID)
 
         # 1) Klasör İsimlendirmeleri (checkpoints_v1, checkpoints_v2, ...)
@@ -67,20 +72,7 @@ class Config:
         folder_name = result_folders.get(exp_id, f"experiment_{exp_id}_custom")
         cls.RESULTS_DIR = os.path.join(f"{cls.PREFIX_DIR}outputs", folder_name)
 
-        # Comet Proje İsmi: experiment-1-flat, experiment-2-hierarchical vb.
-        comet_suffixes = {
-            1: "flat",
-            2: "hierarchical",
-            3: "rich"
-        }
-        suffix = comet_suffixes.get(exp_id, "custom")
-        cls.COMET_PROJECT_NAME_PREFIX = f"experiment-{exp_id}-{suffix}"
-
-        # 3) Veri Dosyası Suffix (Uzantı) Mantığı
-        # Exp 1 -> Normal (data_v2_train.csv)
-        # Exp 2 -> Augmented (data_v2_train_aug.csv), ama Test normal (data_v2_test.csv)
-        # Exp 3 -> Extended (data_v2_train_ext.csv), Test de Extended (data_v2_test_ext.csv)
-
+        # 3) Veri Yolları
         if exp_id == 3:
             # Context-Aware: Tüm dosyalar _ext uzantılı
             suffix_train = "_ext"
@@ -98,28 +90,60 @@ class Config:
         cls.DATA_PATH_VAL = os.path.join(cls.DATA_DIR, f"data_v2_val{suffix_train}.csv")
         cls.DATA_PATH_TEST = os.path.join(cls.DATA_DIR, f"data_v2_test{suffix_test}.csv")
 
-        # Klasörlerin varlığını garantiye al
+        # 4) Comet Prefix (Model isminden bağımsız kısım)
+        cls.COMET_PROJECT_PREFIX = f"experiment-{exp_id}"
+
         cls.ensure_directories()
 
     @classmethod
     def set_experiment(cls, experiment_id):
-        """Dışarıdan deney ID'sini değiştirmek için kullanılır."""
+        """Deney ID'sini (int) ayarlar."""
         cls.EXPERIMENT_ID = int(experiment_id)
-        cls._setup()
-        print(f"✅ Deney Ayarlandı: {cls.EXPERIMENT_ID} -> {cls.CHECKPOINT_DIR}")
+        cls._setup_paths()
+
+        # Eğer model daha önce seçildiyse proje ismini güncelle
+        if cls.ACTIVE_MODEL_NAME:
+            cls._update_comet_name()
+
+    @classmethod
+    def set_model(cls, model_index):
+        """
+        Model indeksini (int) alır, aktif modeli seçer ve Comet ismini günceller.
+        Örn: Config.set_model(0) -> BERT seçilir.
+        """
+        idx = int(model_index)
+        if not (0 <= idx < len(cls.MODELS)):
+            raise IndexError(f"Geçersiz model indeksi: {idx}. (0-{len(cls.MODELS) - 1} arası olmalı)")
+
+        cls.MODEL_INDEX = idx
+        cls.ACTIVE_MODEL_NAME = cls.MODELS[idx]
+        cls._update_comet_name()
+
+    @classmethod
+    def _update_comet_name(cls):
+        """Comet proje ismini (Prefix + Model Short Name) birleştirir."""
+        if cls.ACTIVE_MODEL_NAME and cls.COMET_PROJECT_PREFIX:
+            short_name = cls.get_model_short_name(cls.ACTIVE_MODEL_NAME)
+            cls.COMET_PROJECT_NAME = f"{cls.COMET_PROJECT_PREFIX}-{short_name}"
 
     @classmethod
     def get_model_short_name(cls, model_name):
         return model_name.split('/')[-1]
 
     @classmethod
-    def get_checkpoint_path(cls, model_name):
-        short_name = cls.get_model_short_name(model_name)
+    def get_checkpoint_path(cls, model_name=None):
+        name = model_name if model_name else cls.ACTIVE_MODEL_NAME
+        if not name:
+            raise ValueError("Model seçili değil!")
+        short_name = cls.get_model_short_name(name)
         return os.path.join(cls.CHECKPOINT_DIR, short_name)
 
     @classmethod
-    def get_optuna_db_path(cls, model_name):
-        short_name = cls.get_model_short_name(model_name)
+    def get_optuna_db_path(cls, model_name=None):
+        name = model_name if model_name else cls.ACTIVE_MODEL_NAME
+        if not name:
+            raise ValueError("Model seçili değil!")
+        short_name = cls.get_model_short_name(name)
         return os.path.join(cls.CHECKPOINT_DIR, f"{short_name}_refined.db")
 
     @classmethod
@@ -130,20 +154,21 @@ class Config:
     @classmethod
     def print_config(cls):
         print("\n" + "=" * 60)
-        print(f"{'AKTİF KONFIGÜRASYON (Experiment ' + str(cls.EXPERIMENT_ID) + ')':^60}")
+        print(f"{'AKTİF KONFIGÜRASYON':^60}")
         print("=" * 60)
+        print(f" Experiment ID     : {cls.EXPERIMENT_ID}")
+        print(f" Model Index       : {cls.MODEL_INDEX}")
+        print(f" Aktif Model       : {cls.ACTIVE_MODEL_NAME if cls.ACTIVE_MODEL_NAME else 'SEÇİLMEDİ'}")
+        print(f" Comet Project     : {cls.COMET_PROJECT_NAME if cls.COMET_PROJECT_NAME else '---'}")
+        print("-" * 60)
         print(f" Checkpoint Dir    : {cls.CHECKPOINT_DIR}")
         print(f" Results Dir       : {cls.RESULTS_DIR}")
-        print(f" Comet Project     : {cls.COMET_PROJECT_NAME_PREFIX}")
         print("-" * 60)
         print(f" Train Data        : {cls.DATA_PATH_TRAIN}")
         print(f" Val Data          : {cls.DATA_PATH_VAL}")
         print(f" Test Data         : {cls.DATA_PATH_TEST}")
-        print("-" * 60)
-        print(f" Loss Function     : {cls.LOSS_FUNCTION}")
-        print(f" Trials / Epochs   : {cls.NUMBER_TRIALS} / {cls.NUMBER_EPOCHS}")
         print("=" * 60 + "\n")
 
 
-# Dosya ilk yüklendiğinde mevcut ID'ye göre ayarları yap
-Config._setup()
+# Varsayılan kurulum
+Config._setup_paths()

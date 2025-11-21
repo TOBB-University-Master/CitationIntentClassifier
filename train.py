@@ -171,10 +171,12 @@ def objective_flat(trial, model_name):
 
     # --- 2. Comet ML ---
     if Config.COMET_ONLINE_MODE:
-        experiment = Experiment(api_key=Config.COMET_API_KEY, project_name=Config.COMET_PROJECT_NAME_PREFIX,
+        experiment = Experiment(api_key=Config.COMET_API_KEY,
+                                project_name=Config.COMET_PROJECT_NAME,
                                 workspace=Config.COMET_WORKSPACE)
     else:
-        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME_PREFIX, workspace=Config.COMET_WORKSPACE,
+        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME,
+                                       workspace=Config.COMET_WORKSPACE,
                                        log_dir=output_dir)
 
     experiment.set_name(f"trial_{trial.number}")
@@ -616,10 +618,10 @@ def objective_hierarchical(trial, model_name):
     # Comet
     if Config.COMET_ONLINE_MODE:
         experiment = Experiment(api_key=Config.COMET_API_KEY,
-                                project_name=Config.COMET_PROJECT_NAME_PREFIX,
+                                project_name=Config.COMET_PROJECT_NAME,
                                 workspace=Config.COMET_WORKSPACE)
     else:
-        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME_PREFIX,
+        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME,
                                        workspace=Config.COMET_WORKSPACE,
                                        log_dir=output_dir_base)
 
@@ -676,12 +678,13 @@ def main():
     # 1. Config Ayarla
     try:
         Config.set_experiment(args.experiment_id)
+        Config.set_model(args.model_index)
         Config.print_config()
     except ValueError as e:
         print(f"Hata: {e}")
         sys.exit(1)
 
-    model_name = Config.MODELS[args.model_index]
+    model_name = Config.ACTIVE_MODEL_NAME
     print(f"🚀 Seçilen Model: {model_name}")
 
     # 2. Study Oluştur
