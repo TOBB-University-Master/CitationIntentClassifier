@@ -188,7 +188,11 @@ def objective_flat(trial, model_name):
         "optimizer": "AdamW",
         "patience": Config.PATIENCE,
         "seed": Config.SEED,
-        "max_len": Config.MAX_LEN
+        "max_len": Config.MAX_LEN,
+        "evaluation_metric": Config.EVALUATION_METRIC,
+        "loss_function": Config.LOSS_FUNCTION,
+        "experiment_id": Config.EXPERIMENT_ID,
+        "model_id": Config.MODEL_INDEX,
     })
 
     # --- 3. Veri Yükleme ---
@@ -632,7 +636,11 @@ def objective_hierarchical(trial, model_name):
         "patience": Config.PATIENCE,
         "seed": Config.SEED,
         "max_len": Config.MAX_LEN,
-        "optimizer": "AdamW"
+        "optimizer": "AdamW",
+        "evaluation_metric": Config.EVALUATION_METRIC,
+        "loss_function": Config.LOSS_FUNCTION,
+        "experiment_id": Config.EXPERIMENT_ID,
+        "model_id": Config.MODEL_INDEX,
     })
 
     # Veri Yükleme

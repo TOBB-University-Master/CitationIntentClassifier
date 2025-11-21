@@ -14,7 +14,7 @@ class Config:
     ]
 
     COMET_API_KEY = "LrkBSXNSdBGwikgVrzE2m73iw"
-    COMET_WORKSPACE = "ulakbim-cic-colab-v101-weighted"
+    COMET_WORKSPACE = "ulakbim-cic-colab-v101-focal"
     COMET_ONLINE_MODE = True
 
     # Eğitim Parametreleri
@@ -27,7 +27,7 @@ class Config:
     MAX_LEN = 128
     LR_WARMUP_RATIO = 0.1
     # Seçenekler: "FocalLoss", "CrossEntropyLoss" , "CrossEntropyLoss_Weighted"
-    LOSS_FUNCTION = "CrossEntropyLoss_Weighted"
+    LOSS_FUNCTION = "FocalLoss"
     # Seçenekler: "macro_f1", "accuracy"
     EVALUATION_METRIC = "accuracy"
 
