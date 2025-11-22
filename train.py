@@ -49,7 +49,7 @@ def setup_logging(log_file):
     )
 
 
-def get_criterion(loss_name, device, class_weights=None):
+def get_criterion(loss_name, device, class_weights=None, gamma=2.0):
     """Config'deki seçime göre Loss fonksiyonunu döndürür."""
     if class_weights is not None:
         weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
@@ -57,14 +57,14 @@ def get_criterion(loss_name, device, class_weights=None):
         weights_tensor = None
 
     if loss_name == "FocalLoss":
-        return FocalLoss(alpha=weights_tensor, gamma=2.0)
+        return FocalLoss(alpha=weights_tensor, gamma=gamma)
     elif loss_name == "CrossEntropyLoss_Weighted":
         return nn.CrossEntropyLoss(weight=weights_tensor)
     elif loss_name == "CrossEntropyLoss":
         return nn.CrossEntropyLoss()
     else:
         logging.warning(f"Bilinmeyen loss: {loss_name}. Varsayılan FocalLoss kullanılıyor.")
-        return FocalLoss(alpha=weights_tensor, gamma=2.0)
+        return FocalLoss(alpha=weights_tensor, gamma=gamma)
 
 
 def train_one_epoch(model, loader, optimizer, scheduler, criterion, device, progress_desc):
@@ -154,6 +154,7 @@ def objective_flat(trial, model_name):
     batch_size = trial.suggest_categorical("batch_size", [16, 32])
     warmup_ratio = trial.suggest_categorical("warmup_ratio", [0.05, 0.1])
     weight_decay = trial.suggest_float("weight_decay", 0.0, 0.1)
+    gamma = trial.suggest_float("gamma", 0.5, 5.0)
 
     config_dict = {
         "model_name": model_name,
@@ -185,6 +186,7 @@ def objective_flat(trial, model_name):
         "batch_size": batch_size,
         "model": model_name,
         "weight_decay": weight_decay,
+        "gamma": gamma,
         "optimizer": "AdamW",
         "patience": Config.PATIENCE,
         "seed": Config.SEED,
@@ -222,7 +224,7 @@ def objective_flat(trial, model_name):
     # Class Weights
     train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
     class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
-    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights)
+    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights, gamma=gamma)
 
     # Optimizer
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -300,7 +302,15 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     lr = trial.suggest_float(f"lr_{task_type}", 1e-5, 5e-5, log=True)
     warmup_ratio = trial.suggest_categorical(f"warmup_{task_type}", [0.05, 0.1])
     weight_decay = trial.suggest_float(f"weight_decay_{task_type}", 0.0, 0.1)
+    gamma = trial.suggest_float(f"gamma_{task_type}", 0.5, 5.0)
     epochs = Config.NUMBER_EPOCHS
+
+    experiment.log_parameters({
+        f"lr_{task_type}": lr,
+        f"warmup_{task_type}": warmup_ratio,
+        f"weight_decay_{task_type}": weight_decay,
+        f"gamma_{task_type}": gamma
+    })
 
     output_dir = os.path.join(config["output_dir_base"], task_type)
     os.makedirs(output_dir, exist_ok=True)
@@ -338,7 +348,7 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
 
     train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
     class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
-    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights)
+    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights, gamma=gamma)
 
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     num_steps = len(train_loader) * epochs
@@ -446,7 +456,17 @@ def evaluate_flat_test(config, experiment, test_df, device, model_path, encoder_
     macro_f1 = report_dict['macro avg']['f1-score']
 
     logging.info(f"🏆 FLAT TEST SKORU - Acc: {acc:.4f} | F1: {macro_f1:.4f}")
-    experiment.log_metrics({"test_acc": acc, "test_f1": macro_f1})
+
+    metrics_to_log = {"test_acc": acc, "test_f1": macro_f1}
+    # Extract per-class metrics
+    for label, scores in report_dict.items():
+        if isinstance(scores, dict):
+            metrics_to_log[f"class_f1_{label}"] = scores["f1-score"]
+            metrics_to_log[f"class_prec_{label}"] = scores["precision"]
+            metrics_to_log[f"class_rec_{label}"] = scores["recall"]
+
+    # Log everything at once
+    experiment.log_metrics(metrics_to_log)
     experiment.log_text("test_classification_report.txt", report_str)
 
     # --- 1. Confusion Matrix Gönder ---
@@ -565,7 +585,16 @@ def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model
 
     logging.info(f"🏆 TEST SKORU - Acc: {acc:.4f} | F1: {macro_f1:.4f}")
 
-    experiment.log_metrics({"test_acc": acc, "test_f1": macro_f1})
+    metrics_to_log = {"test_acc": acc, "test_f1": macro_f1}
+
+    # Extract per-class metrics
+    for label, scores in report_dict.items():
+        if label not in ["accuracy", "macro avg", "weighted avg"]:
+            metrics_to_log[f"class_f1_{label}"] = scores["f1-score"]
+            metrics_to_log[f"class_prec_{label}"] = scores["precision"]
+            metrics_to_log[f"class_rec_{label}"] = scores["recall"]
+
+    experiment.log_metrics(metrics_to_log)
     experiment.log_text("combined_hierarchical_test_report.txt", report_str)
 
     # Hatalı Tahminleri CSV Yapıp Tablo Olarak Yükleme
