@@ -458,14 +458,6 @@ def evaluate_flat_test(config, experiment, test_df, device, model_path, encoder_
     logging.info(f"🏆 FLAT TEST SKORU - Acc: {acc:.4f} | F1: {macro_f1:.4f}")
 
     metrics_to_log = {"test_acc": acc, "test_f1": macro_f1}
-    # Extract per-class metrics
-    for label, scores in report_dict.items():
-        if isinstance(scores, dict):
-            metrics_to_log[f"class_f1_{label}"] = scores["f1-score"]
-            metrics_to_log[f"class_prec_{label}"] = scores["precision"]
-            metrics_to_log[f"class_rec_{label}"] = scores["recall"]
-
-    # Log everything at once
     experiment.log_metrics(metrics_to_log)
     experiment.log_text("test_classification_report.txt", report_str)
 
@@ -586,14 +578,6 @@ def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model
     logging.info(f"🏆 TEST SKORU - Acc: {acc:.4f} | F1: {macro_f1:.4f}")
 
     metrics_to_log = {"test_acc": acc, "test_f1": macro_f1}
-
-    # Extract per-class metrics
-    for label, scores in report_dict.items():
-        if label not in ["accuracy", "macro avg", "weighted avg"]:
-            metrics_to_log[f"class_f1_{label}"] = scores["f1-score"]
-            metrics_to_log[f"class_prec_{label}"] = scores["precision"]
-            metrics_to_log[f"class_rec_{label}"] = scores["recall"]
-
     experiment.log_metrics(metrics_to_log)
     experiment.log_text("combined_hierarchical_test_report.txt", report_str)
 
