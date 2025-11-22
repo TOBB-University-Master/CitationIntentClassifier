@@ -262,7 +262,7 @@ def objective_flat(trial, model_name):
             with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
                 pickle.dump(train_dataset.label_encoder, f)
             logging.info(f"🚀 Yeni en iyi skor: {best_score:.4f}")
-            experiment.log_text(f"best_val_report_epoch_{epoch + 1}.txt", val_report)
+            experiment.log_asset_data(val_report, name=f"best_val_report_epoch_{epoch + 1}.txt")
         else:
             epochs_no_improve += 1
 
@@ -459,7 +459,7 @@ def evaluate_flat_test(config, experiment, test_df, device, model_path, encoder_
 
     metrics_to_log = {"test_acc": acc, "test_f1": macro_f1}
     experiment.log_metrics(metrics_to_log)
-    experiment.log_text("test_classification_report.txt", report_str)
+    experiment.log_asset_data(report_str, name="test_classification_report.txt")
 
     # --- 1. Confusion Matrix Gönder ---
     try:
@@ -579,7 +579,7 @@ def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model
 
     metrics_to_log = {"test_acc": acc, "test_f1": macro_f1}
     experiment.log_metrics(metrics_to_log)
-    experiment.log_text("combined_hierarchical_test_report.txt", report_str)
+    experiment.log_asset_data(report_str, name="combined_hierarchical_test_report.txt")
 
     # Hatalı Tahminleri CSV Yapıp Tablo Olarak Yükleme
     if misclassified_samples:
