@@ -14,7 +14,7 @@ class Config:
     ]
 
     COMET_API_KEY = "LrkBSXNSdBGwikgVrzE2m73iw"
-    COMET_WORKSPACE = "ksk-test"
+    COMET_WORKSPACE = "ulakbim-cic-colab-v101-focal-gamma"
     COMET_ONLINE_MODE = True
 
     # Eğitim Parametreleri
@@ -40,7 +40,7 @@ class Config:
     MODEL_INDEX = 0
 
     ACTIVE_MODEL_NAME = None
-    PREFIX_DIR = "_train_002/"
+    PREFIX_DIR = ""
 
     # Dinamik Yollar (set_experiment ve set_model ile dolar)
     CHECKPOINT_DIR = ""
