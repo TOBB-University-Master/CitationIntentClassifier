@@ -6,3 +6,4 @@
 output/
 checkpoints*/
 __pycache__/
+_train_*

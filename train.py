@@ -642,7 +642,7 @@ def objective_hierarchical(trial, model_name):
                                        workspace=Config.COMET_WORKSPACE,
                                        log_dir=output_dir_base)
 
-    experiment.set_name(f"hierarchical_trial_{trial.number}")
+    experiment.set_name(f"trial_{trial.number}")
     experiment.log_parameters(trial.params)
     experiment.log_parameters({
         "model_name": config["model_name"],
@@ -692,12 +692,14 @@ def objective_hierarchical(trial, model_name):
 
 def main():
     parser = argparse.ArgumentParser(description="Unified Training Script")
-    parser.add_argument("--experiment_id", type=int, default=1, help="1: Flat, 2: Hierarchical, 3: Context-Aware")
-    parser.add_argument("--model_index", type=int, default=0, help="Index of the model in Config.MODELS")
+    parser.add_argument("--experiment_id", type=int, default=None, help="1: Flat, 2: Hierarchical, 3: Context-Aware")
+    parser.add_argument("--model_index", type=int, default=None, help="Index of the model in Config.MODELS")
+    parser.add_argument("--prefix_dir", type=str, default=None, help="Çıktıların kaydedileceği üst klasör (örn: _train_run_1/)")
     args = parser.parse_args()
 
     # 1. Config Ayarla
     try:
+        Config.set_prefix(args.prefix_dir)
         Config.set_experiment(args.experiment_id)
         Config.set_model(args.model_index)
         Config.print_config()

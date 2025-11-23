@@ -14,7 +14,7 @@ class Config:
     ]
 
     COMET_API_KEY = "LrkBSXNSdBGwikgVrzE2m73iw"
-    COMET_WORKSPACE = "ulakbim-cic-colab-v101-focal-gamma"
+    COMET_WORKSPACE = "ksk-test"
     COMET_ONLINE_MODE = True
 
     # Eğitim Parametreleri
@@ -36,11 +36,11 @@ class Config:
     # ==========================================================================
     # 2. DENEY YAPILANDIRMASI (EXPERIMENT ID)
     # ==========================================================================
-    EXPERIMENT_ID = 1
+    EXPERIMENT_ID = 3
     MODEL_INDEX = 0
 
     ACTIVE_MODEL_NAME = None
-    PREFIX_DIR = ""
+    PREFIX_DIR = "_train_002/"
 
     # Dinamik Yollar (set_experiment ve set_model ile dolar)
     CHECKPOINT_DIR = ""
@@ -77,6 +77,7 @@ class Config:
             # Context-Aware: Tüm dosyalar _ext uzantılı
             suffix_train = "_ext"
             suffix_test = "_ext"
+            cls.MAX_LEN = 256
         elif exp_id == 2:
             # Hierarchical: Eğitim aug, Test normal (Yapısı gereği)
             suffix_train = ""
@@ -96,7 +97,19 @@ class Config:
         cls.ensure_directories()
 
     @classmethod
+    def set_prefix(cls, prefix_dir):
+        """Prefix değerini ayarlar. None gelirse değiştirmez."""
+        if prefix_dir is None:
+            return
+
+        cls.PREFIX_DIR = str(prefix_dir)
+        cls._setup_paths()  # Prefix değişince yolları güncelle
+
+    @classmethod
     def set_experiment(cls, experiment_id):
+        if experiment_id is None:
+            return
+
         """Deney ID'sini (int) ayarlar."""
         cls.EXPERIMENT_ID = int(experiment_id)
         cls._setup_paths()
@@ -111,6 +124,9 @@ class Config:
         Model indeksini (int) alır, aktif modeli seçer ve Comet ismini günceller.
         Örn: Config.set_model(0) -> BERT seçilir.
         """
+        if model_index is None:
+            return
+
         idx = int(model_index)
         if not (0 <= idx < len(cls.MODELS)):
             raise IndexError(f"Geçersiz model indeksi: {idx}. (0-{len(cls.MODELS) - 1} arası olmalı)")
