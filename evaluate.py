@@ -247,24 +247,56 @@ def main():
 
                 # --- EXPERIMENT 2 & 3 (HIERARCHICAL) ---
                 else:
-                    bin_path = os.path.join(best_trial_path, "binary")
-                    multi_path = os.path.join(best_trial_path, "multiclass")
+                    bin_dir = os.path.join(best_trial_path, "binary")
+                    multi_dir = os.path.join(best_trial_path, "multiclass")
 
+                    # 1. Klasör Kontrolü (Eğer binary klasörü yoksa bu bir Flat model olabilir)
+                    if not os.path.exists(bin_dir):
+                        log_and_print(f"UYARI: '{model_short}' için hiyerarşik klasör yapısı ('binary') bulunamadı.",
+                                      log_file)
+                        log_and_print(
+                            f"       Muhtemelen bu bir FLAT modeldir ama Experiment ID={Config.EXPERIMENT_ID} seçildi.",
+                            log_file)
+                        continue
+
+                    # 2. Dosya İsmi Bulma (Eski ve Yeni versiyon uyumluluğu için)
+                    def find_file(directory, choices):
+                        for name in choices:
+                            path = os.path.join(directory, name)
+                            if os.path.exists(path):
+                                return path
+                        return None
+
+                    # Binary Encoder Yolu
+                    bin_enc_path = find_file(bin_dir, ["label_encoder.pkl", "label_encoder_binary.pkl"])
+                    # Binary Model Yolu
+                    bin_model_path = find_file(bin_dir, ["best_model.pt", "pytorch_model.bin"])
+
+                    # Multiclass Encoder Yolu
+                    multi_enc_path = find_file(multi_dir, ["label_encoder.pkl", "label_encoder_multiclass.pkl"])
+                    # Multiclass Model Yolu
+                    multi_model_path = find_file(multi_dir, ["best_model.pt", "pytorch_model.bin"])
+
+                    # Eğer dosyalardan biri eksikse hata ver
+                    if not all([bin_enc_path, bin_model_path, multi_enc_path, multi_model_path]):
+                        log_and_print(f"HATA: Gerekli model dosyaları eksik. Klasör: {best_trial_path}", log_file)
+                        continue
+
+                    # 3. Yükleme İşlemleri
                     # Binary Load
-                    with open(os.path.join(bin_path, "label_encoder.pkl"), "rb") as f:
+                    with open(bin_enc_path, "rb") as f:
                         bin_enc = pickle.load(f)
                     bin_model = TransformerClassifier(model_name, num_labels=len(bin_enc.classes_))
                     bin_model.transformer.resize_token_embeddings(len(tokenizer))
-                    bin_model.load_state_dict(torch.load(os.path.join(bin_path, "best_model.pt"), map_location=device))
+                    bin_model.load_state_dict(torch.load(bin_model_path, map_location=device))
                     bin_model.to(device)
 
                     # Multiclass Load
-                    with open(os.path.join(multi_path, "label_encoder.pkl"), "rb") as f:
+                    with open(multi_enc_path, "rb") as f:
                         multi_enc = pickle.load(f)
                     multi_model = TransformerClassifier(model_name, num_labels=len(multi_enc.classes_))
                     multi_model.transformer.resize_token_embeddings(len(tokenizer))
-                    multi_model.load_state_dict(
-                        torch.load(os.path.join(multi_path, "best_model.pt"), map_location=device))
+                    multi_model.load_state_dict(torch.load(multi_model_path, map_location=device))
                     multi_model.to(device)
 
                     # Dataset (Exp 3 için context True)

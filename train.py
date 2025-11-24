@@ -195,6 +195,7 @@ def objective_flat(trial, model_name):
         "loss_function": Config.LOSS_FUNCTION,
         "experiment_id": Config.EXPERIMENT_ID,
         "model_id": Config.MODEL_INDEX,
+        "context_rich": Config.CONTEXT_RICH
     })
 
     # --- 3. Veri Yükleme ---
@@ -207,8 +208,8 @@ def objective_flat(trial, model_name):
     test_df = pd.read_csv(Config.DATA_PATH_TEST)
 
     # Dataset: Task=None (Düz)
-    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=train_df)
-    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=val_df)
+    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=train_df, include_section_in_input=Config.CONTEXT_RICH)
+    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=val_df, include_section_in_input=Config.CONTEXT_RICH)
 
     num_labels = len(train_dataset.get_label_names())
     label_names = train_dataset.get_label_names()
@@ -326,12 +327,8 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
     tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
 
-    # Dataset Oluşturma (Exp 3 için context kontrolü burada yapılır)
-    # Eğer Exp 3 ise include_section_in_input=True
-    use_context = (Config.EXPERIMENT_ID == 3)
-
-    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=train_df, task=task_type, include_section_in_input=use_context)
-    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=val_df, task=task_type, include_section_in_input=use_context)
+    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=train_df, task=task_type, include_section_in_input=Config.CONTEXT_RICH)
+    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=val_df, task=task_type, include_section_in_input=Config.CONTEXT_RICH)
 
     # Label Encoder Kaydet
     with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
@@ -654,6 +651,7 @@ def objective_hierarchical(trial, model_name):
         "loss_function": Config.LOSS_FUNCTION,
         "experiment_id": Config.EXPERIMENT_ID,
         "model_id": Config.MODEL_INDEX,
+        "context_rich": Config.CONTEXT_RICH
     })
 
     # Veri Yükleme
@@ -720,7 +718,7 @@ def main():
     study = optuna.create_study(study_name=study_name, storage=storage, load_if_exists=True, direction="maximize")
 
     # 3. Doğru Objective'i Seç
-    if args.experiment_id == 1:
+    if args.experiment_id in [1, 4]:
         objective_func = partial(objective_flat, model_name=model_name)
     elif args.experiment_id in [2, 3]:
         objective_func = partial(objective_hierarchical, model_name=model_name)

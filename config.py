@@ -40,7 +40,8 @@ class Config:
     MODEL_INDEX = 0
 
     ACTIVE_MODEL_NAME = None
-    PREFIX_DIR = ""
+    PREFIX_DIR = "_train_104/"
+    CONTEXT_RICH = False
 
     # Dinamik Yollar (set_experiment ve set_model ile dolar)
     CHECKPOINT_DIR = ""
@@ -67,29 +68,24 @@ class Config:
         result_folders = {
             1: "experiment_1_flat",
             2: "experiment_2_hierarchical",
-            3: "experiment_3_context_aware"
+            3: "experiment_3_hierarchical_rich",
+            4: "experiment_4_flat_rich"
         }
         folder_name = result_folders.get(exp_id, f"experiment_{exp_id}_custom")
         cls.RESULTS_DIR = os.path.join(f"{cls.PREFIX_DIR}outputs", folder_name)
 
         # 3) Veri Yolları
-        if exp_id == 3:
-            # Context-Aware: Tüm dosyalar _ext uzantılı
-            suffix_train = "_ext"
-            suffix_test = "_ext"
-            cls.MAX_LEN = 256
-        elif exp_id == 2:
-            # Hierarchical: Eğitim aug, Test normal (Yapısı gereği)
-            suffix_train = ""
-            suffix_test = ""
+        if exp_id in [3, 4]:
+            suffix = "_ext"
+            cls.MAX_LEN = 256  # Context olduğu için daha uzun
+            cls.CONTEXT_RICH = True
         else:
-            # Flat / Default: Hepsi normal
-            suffix_train = ""
-            suffix_test = ""
+            suffix = ""  # Exp 1 ve 2 normal veri
+            cls.MAX_LEN = 128
 
-        cls.DATA_PATH_TRAIN = os.path.join(cls.DATA_DIR, f"data_v2_train{suffix_train}.csv")
-        cls.DATA_PATH_VAL = os.path.join(cls.DATA_DIR, f"data_v2_val{suffix_train}.csv")
-        cls.DATA_PATH_TEST = os.path.join(cls.DATA_DIR, f"data_v2_test{suffix_test}.csv")
+        cls.DATA_PATH_TRAIN = os.path.join(cls.DATA_DIR, f"data_v2_train{suffix}.csv")
+        cls.DATA_PATH_VAL = os.path.join(cls.DATA_DIR, f"data_v2_val{suffix}.csv")
+        cls.DATA_PATH_TEST = os.path.join(cls.DATA_DIR, f"data_v2_test{suffix}.csv")
 
         # 4) Comet Prefix (Model isminden bağımsız kısım)
         cls.COMET_PROJECT_PREFIX = f"experiment-{exp_id}"
@@ -99,22 +95,15 @@ class Config:
     @classmethod
     def set_prefix(cls, prefix_dir):
         """Prefix değerini ayarlar. None gelirse değiştirmez."""
-        if prefix_dir is None:
-            return
-
+        if prefix_dir is None: return
         cls.PREFIX_DIR = str(prefix_dir)
         cls._setup_paths()  # Prefix değişince yolları güncelle
 
     @classmethod
     def set_experiment(cls, experiment_id):
-        if experiment_id is None:
-            return
-
-        """Deney ID'sini (int) ayarlar."""
+        if experiment_id is None: return
         cls.EXPERIMENT_ID = int(experiment_id)
         cls._setup_paths()
-
-        # Eğer model daha önce seçildiyse proje ismini güncelle
         if cls.ACTIVE_MODEL_NAME:
             cls._update_comet_name()
 
@@ -124,9 +113,7 @@ class Config:
         Model indeksini (int) alır, aktif modeli seçer ve Comet ismini günceller.
         Örn: Config.set_model(0) -> BERT seçilir.
         """
-        if model_index is None:
-            return
-
+        if model_index is None: return
         idx = int(model_index)
         if not (0 <= idx < len(cls.MODELS)):
             raise IndexError(f"Geçersiz model indeksi: {idx}. (0-{len(cls.MODELS) - 1} arası olmalı)")
@@ -183,6 +170,9 @@ class Config:
         print(f" Train Data        : {cls.DATA_PATH_TRAIN}")
         print(f" Val Data          : {cls.DATA_PATH_VAL}")
         print(f" Test Data         : {cls.DATA_PATH_TEST}")
+        print("-" * 60)
+        print(f" Context Rich      : {cls.CONTEXT_RICH}")
+        print(f" Max Token Length  : {cls.MAX_LEN}")
         print("=" * 60 + "\n")
 
 
