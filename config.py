@@ -95,13 +95,19 @@ class Config:
     @classmethod
     def set_prefix(cls, prefix_dir):
         """Prefix değerini ayarlar. None gelirse değiştirmez."""
-        if prefix_dir is None: return
+        # args parametresi olarak verilmemişse default değer alınır
+        if prefix_dir is None:
+            prefix_dir = cls.PREFIX_DIR
+
         cls.PREFIX_DIR = str(prefix_dir)
         cls._setup_paths()  # Prefix değişince yolları güncelle
 
     @classmethod
     def set_experiment(cls, experiment_id):
-        if experiment_id is None: return
+        # args parametresi olarak verilmemişse default değer alınır
+        if experiment_id is None:
+            experiment_id = cls.EXPERIMENT_ID
+
         cls.EXPERIMENT_ID = int(experiment_id)
         cls._setup_paths()
         if cls.ACTIVE_MODEL_NAME:
@@ -109,11 +115,10 @@ class Config:
 
     @classmethod
     def set_model(cls, model_index):
-        """
-        Model indeksini (int) alır, aktif modeli seçer ve Comet ismini günceller.
-        Örn: Config.set_model(0) -> BERT seçilir.
-        """
-        if model_index is None: return
+        # args parametresi olarak verilmemişse default değer alınır
+        if model_index is None:
+            model_index = cls.MODEL_INDEX
+
         idx = int(model_index)
         if not (0 <= idx < len(cls.MODELS)):
             raise IndexError(f"Geçersiz model indeksi: {idx}. (0-{len(cls.MODELS) - 1} arası olmalı)")

@@ -3,6 +3,7 @@ import os
 import sys
 import logging
 import pickle
+import time
 import pandas as pd
 import numpy as np
 import torch
@@ -31,22 +32,65 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 # ==============================================================================
 #                      YARDIMCI FONKSİYONLAR (HELPER)
 # ==============================================================================
+class ExperimentLogger:
+    """
+    Eğitim süreçleri için güvenli loglama yöneticisi (Context Manager).
+    'with' bloğu ile kullanıldığında log dosyasını açar, işlem bitince kapatır.
+    """
+    def __init__(self, log_file):
+        self.log_file = log_file
+        self.file_handler = None
+        self.root_logger = logging.getLogger()
 
-def setup_logging(log_file):
-    """Loglama ayarlarını yapar."""
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    # Root logger'ı temizle (tekrarlı logları önlemek için)
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
+    def __enter__(self):
+        # 1. Klasör oluştur
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, mode='a'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+        # 2. Root Logger Ayarla
+        self.root_logger.setLevel(logging.INFO)
+
+        # 3. Dosya Handler'ı Ekle
+        self.file_handler = logging.FileHandler(self.log_file, mode='w', encoding='utf-8')
+        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+        self.file_handler.setFormatter(formatter)
+        self.root_logger.addHandler(self.file_handler)
+
+        # 4. Konsol Handler (Eğer yoksa ekle, varsa dokunma - tekrarlı basmasın)
+        has_console = any(isinstance(h, logging.StreamHandler) for h in self.root_logger.handlers)
+        if not has_console:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            self.root_logger.addHandler(console_handler)
+
+        return self.root_logger
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # İşlem bitince veya hata olunca Handler'ı temizle
+        if self.file_handler:
+            self.root_logger.removeHandler(self.file_handler)
+            self.file_handler.close()
+
+
+def log_trial_details(trial, model_name, params, experiment):
+    """Deneme parametrelerini ve Comet bilgisini log dosyasına düzenli yazar."""
+    logging.info("\n" + "=" * 60)
+    logging.info(f"🚀 TRIAL {trial.number} BAŞLIYOR: {model_name}")
+    logging.info("=" * 60)
+
+    # Comet URL (Online ise)
+    if hasattr(experiment, 'url'):
+        logging.info(f"🔗 Comet Linki: {experiment.url}")
+    else:
+        logging.info(f"🔗 Comet Modu: Offline")
+
+    logging.info("-" * 60)
+    logging.info("⚙️  SEÇİLEN HİPERPARAMETRELER:")
+
+    # Parametreleri hizalı yazdır
+    for key, value in params.items():
+        logging.info(f"   • {key:<25}: {value}")
+
+    logging.info("=" * 60 + "\n")
 
 
 def get_criterion(loss_name, device, class_weights=None, gamma=2.0):
@@ -71,9 +115,14 @@ def train_one_epoch(model, loader, optimizer, scheduler, criterion, device, prog
     """Tek bir epoch eğitimi yapar."""
     model.train()
     total_loss = 0
-    progress_bar = tqdm(loader, desc=progress_desc, leave=False)
 
-    for batch in progress_bar:
+    # [LOG][INFO]
+    start_time = time.time()
+    num_steps = len(loader)
+    log_interval = max(10, num_steps // 10)
+
+    progress_bar = tqdm(loader, desc=progress_desc, leave=False)
+    for step, batch in enumerate(progress_bar):
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["label"].to(device)
@@ -90,13 +139,25 @@ def train_one_epoch(model, loader, optimizer, scheduler, criterion, device, prog
 
         optimizer.zero_grad()
         loss.backward()
+
         optimizer.step()
         scheduler.step()
 
+        current_loss = loss.item()
         total_loss += loss.item()
+
+        current_lr = optimizer.param_groups[0]["lr"]
         progress_bar.set_postfix(loss=f"{loss.item():.4f}")
 
-    return total_loss / len(loader)
+        if (step + 1) % log_interval == 0:
+            logging.info(f"   Step {step + 1}/{num_steps} | Loss: {current_loss:.4f} | LR: {current_lr:.2e}")
+
+    # [LOG][INFO]
+    avg_loss = total_loss / num_steps
+    elapsed_time = time.time() - start_time
+    logging.info(f"   -> Epoch Tamamlandı. Süre: {elapsed_time:.1f}s | Ort. Loss: {avg_loss:.4f}")
+
+    return avg_loss
 
 
 def evaluate_standard(model, loader, device, criterion, label_names):
@@ -133,6 +194,18 @@ def evaluate_standard(model, loader, device, criterion, label_names):
     macro_f1 = report_dict['macro avg']['f1-score']
     avg_loss = total_loss / len(loader) if len(loader) > 0 else 0
 
+    # --- [LOG][INFO] ---
+    # Her sınıfın F1 skorunu yan yana yazdırıp loga basalım.
+    # Örnek Çıktı: [Background: 0.85 | Method: 0.42 | Result: 0.76]
+    class_scores = []
+    for label in label_names:
+        if label in report_dict:
+            f1 = report_dict[label]['f1-score']
+            class_scores.append(f"{label}: {f1:.3f}")
+
+    class_summary_str = " | ".join(class_scores)
+    logging.info(f"   -> Sınıf Performansları (F1): [{class_summary_str}]")
+
     return acc, macro_f1, avg_loss, report_str
 
 
@@ -147,148 +220,158 @@ def objective_flat(trial, model_name):
     model_short_name = Config.get_model_short_name(model_name)
     output_dir = f"{Config.CHECKPOINT_DIR}/{model_short_name}/trial_{trial.number}/"
     os.makedirs(output_dir, exist_ok=True)
-    setup_logging(os.path.join(output_dir, "training.log"))
 
-    # Hiperparametreler
-    lr = trial.suggest_float("lr", 1e-5, 5e-5, log=True)
-    batch_size = trial.suggest_categorical("batch_size", [16, 32])
-    warmup_ratio = trial.suggest_categorical("warmup_ratio", [0.05, 0.1])
-    weight_decay = trial.suggest_float("weight_decay", 0.0, 0.1)
-    gamma = trial.suggest_float("gamma", 0.5, 5.0)
+    with ExperimentLogger(os.path.join(output_dir, "training.log")):
+        # Hiperparametreler
+        lr = trial.suggest_float("lr", 1e-5, 5e-5, log=True)
+        batch_size = trial.suggest_categorical("batch_size", [16, 32])
+        warmup_ratio = trial.suggest_categorical("warmup_ratio", [0.05, 0.1])
+        weight_decay = trial.suggest_float("weight_decay", 0.0, 0.1)
+        gamma = trial.suggest_float("gamma", 0.5, 5.0)
 
-    config_dict = {
-        "model_name": model_name,
-        "batch_size": batch_size,
-        "max_len": Config.MAX_LEN
-    }
+        config_dict = {
+            "experiment_id": Config.EXPERIMENT_ID,
+            "model_id": Config.MODEL_INDEX,
+            "model_name": model_name,
+            "batch_size": batch_size,
+            "max_len": Config.MAX_LEN,
+            "lr": lr,
+            "weight_decay": weight_decay,
+            "warmup_ratio": warmup_ratio,
+            "gamma": gamma,
+            "optimizer": "AdamW",
+            "loss_function": Config.LOSS_FUNCTION,
+            "patience": Config.PATIENCE,
+            "evaluation_metric": Config.EVALUATION_METRIC,
+            "context_rich": Config.CONTEXT_RICH
+        }
 
-    # Cihaz
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-
-    # --- 2. Comet ML ---
-    if Config.COMET_ONLINE_MODE:
-        experiment = Experiment(api_key=Config.COMET_API_KEY,
-                                project_name=Config.COMET_PROJECT_NAME,
-                                workspace=Config.COMET_WORKSPACE)
-    else:
-        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME,
-                                       workspace=Config.COMET_WORKSPACE,
-                                       log_dir=output_dir)
-
-    experiment.set_name(f"trial_{trial.number}")
-    experiment.log_parameters({
-        "lr": lr,
-        "batch_size": batch_size,
-        "model": model_name,
-        "weight_decay": weight_decay,
-        "gamma": gamma,
-        "optimizer": "AdamW",
-        "patience": Config.PATIENCE,
-        "seed": Config.SEED,
-        "max_len": Config.MAX_LEN,
-        "evaluation_metric": Config.EVALUATION_METRIC,
-        "loss_function": Config.LOSS_FUNCTION,
-        "experiment_id": Config.EXPERIMENT_ID,
-        "model_id": Config.MODEL_INDEX,
-        "context_rich": Config.CONTEXT_RICH
-    })
-
-    # --- 3. Veri Yükleme ---
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
-
-    logging.info("Veriler yükleniyor (Flat)...")
-    train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
-    val_df = pd.read_csv(Config.DATA_PATH_VAL)
-    test_df = pd.read_csv(Config.DATA_PATH_TEST)
-
-    # Dataset: Task=None (Düz)
-    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=train_df, include_section_in_input=Config.CONTEXT_RICH)
-    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=val_df, include_section_in_input=Config.CONTEXT_RICH)
-
-    num_labels = len(train_dataset.get_label_names())
-    label_names = train_dataset.get_label_names()
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=Config.NUMBER_CPU)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=Config.NUMBER_CPU)
-
-    # --- 4. Model & Loss ---
-    model = TransformerClassifier(model_name, num_labels=num_labels)
-    model.transformer.resize_token_embeddings(len(tokenizer))
-    model.to(device)
-
-    # Class Weights
-    train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
-    class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
-    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights, gamma=gamma)
-
-    # Optimizer
-    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-
-    # Scheduler
-    num_steps = len(train_loader) * Config.NUMBER_EPOCHS
-    scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),num_training_steps=num_steps)
-
-    # --- 5. Eğitim Döngüsü ---
-    best_score = 0.0
-    epochs_no_improve = 0
-    best_model_path = os.path.join(output_dir, "best_model.pt")
-    encoder_path = os.path.join(output_dir, "label_encoder.pkl")
-    for epoch in range(Config.NUMBER_EPOCHS):
-        avg_train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device,f"Epoch {epoch + 1}")
-        acc, f1, avg_val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, label_names)
-
-        logging.info(f"Epoch {epoch + 1} | Loss: {avg_val_loss:.4f} | Acc: {acc:.4f} | F1: {f1:.4f}")
-        experiment.log_metrics({
-            "train_loss": avg_train_loss,
-            "val_loss": avg_val_loss,
-            "val_acc": acc,
-            "val_f1": f1
-        }, step=epoch + 1)
-
-        # Early Stopping (Config.EVALUATION_METRIC'e göre)
-        current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
-
-        if current_score > best_score:
-            best_score = current_score
-            epochs_no_improve = 0
-            torch.save(model.state_dict(), os.path.join(output_dir, "best_model.pt"))
-            # Tokenizer ve Encoder kaydet
-            tokenizer.save_pretrained(output_dir)
-            with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
-                pickle.dump(train_dataset.label_encoder, f)
-            logging.info(f"🚀 Yeni en iyi skor: {best_score:.4f}")
-            experiment.log_asset_data(val_report, name=f"best_val_report_epoch_{epoch + 1}.txt")
+        # Cihaz
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
         else:
-            epochs_no_improve += 1
+            device = torch.device("cpu")
 
-        if epochs_no_improve >= Config.PATIENCE:
-            logging.info("Erken durdurma tetiklendi.")
-            break
+        # --- 2. Comet ML ---
+        if Config.COMET_ONLINE_MODE:
+            experiment = Experiment(api_key=Config.COMET_API_KEY,
+                                    project_name=Config.COMET_PROJECT_NAME,
+                                    workspace=Config.COMET_WORKSPACE)
+        else:
+            experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME,
+                                           workspace=Config.COMET_WORKSPACE,
+                                           log_dir=output_dir)
 
-    if os.path.exists(best_model_path):
-        logging.info(f"En iyi model yükleniyor ve test ediliyor: {best_model_path}")
-        test_score = evaluate_flat_test(
-            config=config_dict,
-            experiment=experiment,
-            test_df=test_df,
-            device=device,
-            model_path=best_model_path,
-            encoder_path=encoder_path
-        )
+        # --- 3. Veri Yükleme ---
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
 
-        logging.info(f"DENEME {trial.number} SONUCU -> Val Score: {best_score:.4f} | Test Score: {test_score:.4f}")
-    else:
-        logging.warning("Best model bulunamadı, test adımı atlanıyor.")
+        logging.info("Veriler yükleniyor (Flat)...")
+        train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
+        val_df = pd.read_csv(Config.DATA_PATH_VAL)
+        test_df = pd.read_csv(Config.DATA_PATH_TEST)
 
-    experiment.end()
+        # Dataset: Task=None (Düz)
+        train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=train_df, include_section_in_input=Config.CONTEXT_RICH)
+        val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled", data_frame=val_df, include_section_in_input=Config.CONTEXT_RICH)
 
-    return best_score
+        num_labels = len(train_dataset.get_label_names())
+        label_names = train_dataset.get_label_names()
+
+        config_dict.update({
+            "data_path_train": Config.DATA_PATH_TRAIN,
+            "data_path_val": Config.DATA_PATH_VAL,
+            "data_path_test": Config.DATA_PATH_TEST,
+            "train_dataset_size" : len(train_dataset),
+            "val_dataset_size" : len(val_dataset),
+            "num_labels": num_labels
+        })
+
+        # --- 3.1 Logging ---
+        experiment.set_name(f"trial_{trial.number}")
+        experiment.log_parameters(config_dict)
+        log_trial_details(trial, model_name, config_dict, experiment)
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=Config.NUMBER_CPU)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=Config.NUMBER_CPU)
+
+        # --- 4. Model & Loss ---
+        model = TransformerClassifier(model_name, num_labels=num_labels)
+        model.transformer.resize_token_embeddings(len(tokenizer))
+        model.to(device)
+
+        # Class Weights
+        train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
+        class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
+        logging.info("=" * 60)
+        logging.info(f"Sınıf Ağırlıkları (Class Weights): {class_weights}")
+        logging.info("=" * 60 + "\n")
+        criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights, gamma=gamma)
+
+        # Optimizer
+        optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+        # Scheduler
+        num_steps = len(train_loader) * Config.NUMBER_EPOCHS
+        scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),num_training_steps=num_steps)
+
+        # --- 5. Eğitim Döngüsü ---
+        best_score = 0.0
+        epochs_no_improve = 0
+        best_model_path = os.path.join(output_dir, "best_model.pt")
+        encoder_path = os.path.join(output_dir, "label_encoder.pkl")
+        for epoch in range(Config.NUMBER_EPOCHS):
+            avg_train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device,f"Epoch {epoch + 1}")
+            acc, f1, avg_val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, label_names)
+
+            logging.info(f"Epoch {epoch + 1} | Training Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {acc:.4f} | Val F1: {f1:.4f}")
+            experiment.log_metrics({
+                "train_loss": avg_train_loss,
+                "val_loss": avg_val_loss,
+                "val_acc": acc,
+                "val_f1": f1
+            }, step=epoch + 1)
+
+            # Early Stopping (Config.EVALUATION_METRIC'e göre)
+            current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
+
+            if current_score > best_score:
+                best_score = current_score
+                epochs_no_improve = 0
+                torch.save(model.state_dict(), os.path.join(output_dir, "best_model.pt"))
+                # Tokenizer ve Encoder kaydet
+                tokenizer.save_pretrained(output_dir)
+                with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
+                    pickle.dump(train_dataset.label_encoder, f)
+                logging.info(f"🚀 Yeni en iyi skor: {best_score:.4f}")
+                experiment.log_asset_data(val_report, name=f"best_val_report_epoch_{epoch + 1}.txt")
+            else:
+                epochs_no_improve += 1
+
+            if epochs_no_improve >= Config.PATIENCE:
+                logging.info("Erken durdurma tetiklendi.")
+                break
+
+        if os.path.exists(best_model_path):
+            logging.info(f"En iyi model yükleniyor ve test ediliyor: {best_model_path}")
+            test_score = evaluate_flat_test(
+                config=config_dict,
+                experiment=experiment,
+                test_df=test_df,
+                device=device,
+                model_path=best_model_path,
+                encoder_path=encoder_path
+            )
+
+            logging.info(f"DENEME {trial.number} SONUCU -> Val Score: {best_score:.4f} | Test Score: {test_score:.4f}")
+        else:
+            logging.warning("Best model bulunamadı, test adımı atlanıyor.")
+
+        experiment.end()
+
+        return best_score
 
 
 # ==============================================================================
@@ -306,85 +389,85 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
     gamma = trial.suggest_float(f"gamma_{task_type}", 0.5, 5.0)
     epochs = Config.NUMBER_EPOCHS
 
-    experiment.log_parameters({
-        f"lr_{task_type}": lr,
-        f"warmup_{task_type}": warmup_ratio,
-        f"weight_decay_{task_type}": weight_decay,
-        f"gamma_{task_type}": gamma
-    })
-
     output_dir = os.path.join(config["output_dir_base"], task_type)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Logger ayarla (stage özelinde)
-    stage_logger = logging.getLogger(f"{task_type}_logger")
-    fh = logging.FileHandler(os.path.join(output_dir, "training.log"), mode='w')
-    stage_logger.addHandler(fh)
-    stage_logger.setLevel(logging.INFO)
+    log_file_path = os.path.join(output_dir, "training.log")
+    with ExperimentLogger(log_file_path):
 
-    logging.info(f"--- {task_type.upper()} Eğitimi Başlıyor ---")
+        config_dict = {
+            f"lr_{task_type}": lr,
+            f"warmup_{task_type}": warmup_ratio,
+            f"weight_decay_{task_type}": weight_decay,
+            f"gamma_{task_type}": gamma
+        }
 
-    tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
-    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
+        experiment.log_parameters(config_dict)
+        log_trial_details(trial, f"{config['model_name']} ({task_type})", config_dict, experiment)
 
-    train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=train_df, task=task_type, include_section_in_input=Config.CONTEXT_RICH)
-    val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=val_df, task=task_type, include_section_in_input=Config.CONTEXT_RICH)
+        tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
+        tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
 
-    # Label Encoder Kaydet
-    with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
-        pickle.dump(train_dataset.label_encoder, f)
+        train_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=train_df, task=task_type, include_section_in_input=Config.CONTEXT_RICH)
+        val_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",data_frame=val_df, task=task_type, include_section_in_input=Config.CONTEXT_RICH)
 
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,num_workers=Config.NUMBER_CPU)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
+        # Label Encoder Kaydet
+        with open(os.path.join(output_dir, "label_encoder.pkl"), "wb") as f:
+            pickle.dump(train_dataset.label_encoder, f)
 
-    # Model ve Loss
-    num_labels = len(train_dataset.get_label_names())
-    model = TransformerClassifier(config["model_name"], num_labels=num_labels)
-    model.transformer.resize_token_embeddings(len(tokenizer))
-    model.to(device)
+        train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,num_workers=Config.NUMBER_CPU)
+        val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
 
-    train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
-    class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
-    criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights, gamma=gamma)
+        # Model ve Loss
+        num_labels = len(train_dataset.get_label_names())
+        model = TransformerClassifier(config["model_name"], num_labels=num_labels)
+        model.transformer.resize_token_embeddings(len(tokenizer))
+        model.to(device)
 
-    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    num_steps = len(train_loader) * epochs
-    scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),num_training_steps=num_steps)
+        train_labels = [train_dataset[i]['label'].item() for i in range(len(train_dataset))]
+        class_weights = compute_class_weight('balanced', classes=np.unique(train_labels), y=train_labels)
+        logging.info("=" * 60)
+        logging.info(f"[{task_type}] Sınıf Ağırlıkları (Class Weights): {class_weights}")
+        logging.info("=" * 60 + "\n")
+        criterion = get_criterion(Config.LOSS_FUNCTION, device, class_weights, gamma=gamma)
 
-    # Eğitim Döngüsü
-    best_score = 0.0
-    epochs_no_improve = 0
-    best_model_path = os.path.join(output_dir, "best_model.pt")
+        optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        num_steps = len(train_loader) * epochs
+        scheduler = get_scheduler("linear", optimizer, num_warmup_steps=int(num_steps * warmup_ratio),num_training_steps=num_steps)
 
-    for epoch in range(epochs):
-        train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device, f"{task_type} Epoch {epoch + 1}")
-        acc, f1, val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, train_dataset.get_label_names())
+        # Eğitim Döngüsü
+        best_score = 0.0
+        epochs_no_improve = 0
+        best_model_path = os.path.join(output_dir, "best_model.pt")
+        for epoch in range(epochs):
+            avg_train_loss = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, device, f"{task_type} Epoch {epoch + 1}")
+            acc, f1, avg_val_loss, val_report = evaluate_standard(model, val_loader, device, criterion, train_dataset.get_label_names())
 
-        logging.info(f"[{task_type}] Epoch {epoch + 1} | Loss: {val_loss:.4f} | Acc: {acc:.4f}")
-        experiment.log_metrics({
-            f"{task_type}_train_loss": train_loss,
-            f"{task_type}_val_acc": acc,
-            f"{task_type}_val_f1": f1,
-            f"{task_type}_val_loss": val_loss
-        }, step=epoch + 1)
+            logging.info(f"Epoch {epoch + 1} | Training Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {acc:.4f} | Val F1: {f1:.4f}")
+            experiment.log_metrics({
+                f"{task_type}_train_loss": avg_train_loss,
+                f"{task_type}_val_acc": acc,
+                f"{task_type}_val_f1": f1,
+                f"{task_type}_val_loss": avg_val_loss
+            }, step=epoch + 1)
 
-        current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
+            current_score = acc if Config.EVALUATION_METRIC == "accuracy" else f1
 
-        if current_score > best_score:
-            best_score = current_score
-            epochs_no_improve = 0
-            torch.save(model.state_dict(), best_model_path)
+            if current_score > best_score:
+                best_score = current_score
+                epochs_no_improve = 0
+                torch.save(model.state_dict(), best_model_path)
 
-            experiment.log_text(f"epoch_{epoch + 1}_best_report_{task_type}.txt", val_report)
-            experiment.log_metric(f"best_validation_{Config.EVALUATION_METRIC}_{task_type}", best_score, step=epoch + 1)
-        else:
-            epochs_no_improve += 1
+                experiment.log_text(f"epoch_{epoch + 1}_best_report_{task_type}.txt", val_report)
+                experiment.log_metric(f"best_validation_{Config.EVALUATION_METRIC}_{task_type}", best_score, step=epoch + 1)
+            else:
+                epochs_no_improve += 1
 
-        if epochs_no_improve >= Config.PATIENCE:
-            logging.info(f"[{task_type}] Erken durdurma.")
-            break
+            if epochs_no_improve >= Config.PATIENCE:
+                logging.info(f"[{task_type}] Erken durdurma.")
+                break
 
-    return best_score, best_model_path
+        return best_score, best_model_path
 
 
 def evaluate_flat_test(config, experiment, test_df, device, model_path, encoder_path):
@@ -410,10 +493,16 @@ def evaluate_flat_test(config, experiment, test_df, device, model_path, encoder_
     model.eval()
 
     # Dataset Oluştur (Exp 3 ise context ekle)
-    use_context = (Config.EXPERIMENT_ID == 3)
-    test_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
-                                   data_frame=test_df, task=None, include_section_in_input=use_context)
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], num_workers=Config.NUMBER_CPU)
+    test_dataset = CitationDataset(tokenizer,
+                                   max_len=Config.MAX_LEN,
+                                   mode="labeled",
+                                   data_frame=test_df,
+                                   task=None,
+                                   include_section_in_input=Config.CONTEXT_RICH)
+
+    test_loader = DataLoader(test_dataset,
+                             batch_size=config["batch_size"],
+                             num_workers=Config.NUMBER_CPU)
 
     all_preds, all_labels = [], []
     misclassified_samples = []  # Hatalı örnekleri saklar
@@ -611,77 +700,95 @@ def objective_hierarchical(trial, model_name):
     model_short_name = Config.get_model_short_name(model_name)
     output_dir_base = f"{Config.CHECKPOINT_DIR}/{model_short_name}/trial_{trial.number}/"
     os.makedirs(output_dir_base, exist_ok=True)
-    setup_logging(os.path.join(output_dir_base, "trial.log"))
 
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
+    with ExperimentLogger(os.path.join(output_dir_base, "trial.log")):
 
-    batch_size = trial.suggest_categorical("batch_size", [16, 32])
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
 
-    # Config Dictionary
-    config = {
-        "model_name": model_name,
-        "output_dir_base": output_dir_base,
-        "batch_size": batch_size
-    }
+        batch_size = trial.suggest_categorical("batch_size", [16, 32])
 
-    # Comet
-    if Config.COMET_ONLINE_MODE:
-        experiment = Experiment(api_key=Config.COMET_API_KEY,
-                                project_name=Config.COMET_PROJECT_NAME,
-                                workspace=Config.COMET_WORKSPACE)
-    else:
-        experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME,
-                                       workspace=Config.COMET_WORKSPACE,
-                                       log_dir=output_dir_base)
+        # Config Dictionary
+        config = {
+            "model_name": model_name,
+            "output_dir_base": output_dir_base,
+            "batch_size": batch_size
+        }
 
-    experiment.set_name(f"trial_{trial.number}")
-    experiment.log_parameters(trial.params)
-    experiment.log_parameters({
-        "model_name": config["model_name"],
-        "patience": Config.PATIENCE,
-        "seed": Config.SEED,
-        "max_len": Config.MAX_LEN,
-        "optimizer": "AdamW",
-        "evaluation_metric": Config.EVALUATION_METRIC,
-        "loss_function": Config.LOSS_FUNCTION,
-        "experiment_id": Config.EXPERIMENT_ID,
-        "model_id": Config.MODEL_INDEX,
-        "context_rich": Config.CONTEXT_RICH
-    })
+        # Comet
+        if Config.COMET_ONLINE_MODE:
+            experiment = Experiment(api_key=Config.COMET_API_KEY,
+                                    project_name=Config.COMET_PROJECT_NAME,
+                                    workspace=Config.COMET_WORKSPACE)
+        else:
+            experiment = OfflineExperiment(project_name=Config.COMET_PROJECT_NAME,
+                                           workspace=Config.COMET_WORKSPACE,
+                                           log_dir=output_dir_base)
 
-    # Veri Yükleme
-    train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
-    val_df = pd.read_csv(Config.DATA_PATH_VAL)
-    test_df = pd.read_csv(Config.DATA_PATH_TEST)
+        experiment.set_name(f"trial_{trial.number}")
+        experiment.log_parameters(trial.params)
+        experiment.log_parameters({
+            "model_name": config["model_name"],
+            "patience": Config.PATIENCE,
+            "seed": Config.SEED,
+            "max_len": Config.MAX_LEN,
+            "optimizer": "AdamW",
+            "evaluation_metric": Config.EVALUATION_METRIC,
+            "loss_function": Config.LOSS_FUNCTION,
+            "experiment_id": Config.EXPERIMENT_ID,
+            "model_id": Config.MODEL_INDEX,
+            "context_rich": Config.CONTEXT_RICH
+        })
 
-    # 1. Binary Model Eğitimi
-    best_bin_score, bin_model_path = run_hierarchical_stage("binary", config, trial, train_df, val_df, experiment, device)
-    experiment.log_metric("final_binary_best_score", best_bin_score)
+        # Veri Yükleme
+        train_df = pd.read_csv(Config.DATA_PATH_TRAIN)
+        val_df = pd.read_csv(Config.DATA_PATH_VAL)
+        test_df = pd.read_csv(Config.DATA_PATH_TEST)
 
-    # 2. Multiclass Model Eğitimi
-    best_multi_score, multi_model_path = run_hierarchical_stage("multiclass", config, trial, train_df, val_df, experiment, device)
-    experiment.log_metric("final_multiclass_best_score", best_multi_score)
+        # 1. Binary Model Eğitimi
+        best_bin_score, bin_model_path = run_hierarchical_stage("binary", config, trial, train_df, val_df, experiment, device)
+        experiment.log_metric("final_binary_best_score", best_bin_score)
 
-    # 3. Birleşik Test
-    bin_enc_path = os.path.join(output_dir_base, "binary/label_encoder.pkl")
-    multi_enc_path = os.path.join(output_dir_base, "multiclass/label_encoder.pkl")
+        # 2. Multiclass Model Eğitimi
+        best_multi_score, multi_model_path = run_hierarchical_stage("multiclass", config, trial, train_df, val_df, experiment, device)
+        experiment.log_metric("final_multiclass_best_score", best_multi_score)
 
-    final_score = evaluate_hierarchical_test(config, experiment, test_df, device,
-                                             bin_model_path, multi_model_path,
-                                             bin_enc_path, multi_enc_path)
+        # 3. Birleşik Test
+        bin_enc_path = os.path.join(output_dir_base, "binary/label_encoder.pkl")
+        multi_enc_path = os.path.join(output_dir_base, "multiclass/label_encoder.pkl")
 
-    # Tokenizer kaydet (trial root)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
-    tokenizer.save_pretrained(output_dir_base)
+        # A) Önce VALIDATION seti üzerinde Birleşik Performansı ölçülür (Optuna karar vereceği değer)
+        logging.info("--- Optuna Optimizasyonu İçin Validation Skoru Hesaplanıyor ---")
+        val_score = evaluate_hierarchical_test(
+            config, experiment, val_df, device,
+            bin_model_path, multi_model_path,
+            bin_enc_path, multi_enc_path
+        )
 
-    experiment.end()
-    return final_score
+        logging.info(f"TRIAL {trial.number} COMBINED VAL SCORE: {val_score:.4f}")
+        experiment.log_metric("combined_val_score", val_score)
+
+        # B) TEST sonucunu bilgilendirme amaçlı (Optuna buna bakmayacak)
+        logging.info("--- Bilgi Amaçlı Test Skoru Hesaplanıyor ---")
+        test_score = evaluate_hierarchical_test(
+            config, experiment, test_df, device,
+            bin_model_path, multi_model_path,
+            bin_enc_path, multi_enc_path
+        )
+        experiment.log_metric("combined_test_score", test_score)
+        logging.info(f"TRIAL {trial.number} COMBINED TEST SCORE: {test_score:.4f}")
+
+        # Tokenizer kaydet (trial root)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.add_special_tokens({'additional_special_tokens': ['<CITE>']})
+        tokenizer.save_pretrained(output_dir_base)
+
+        experiment.end()
+        return val_score
 
 
 # ==============================================================================
@@ -713,14 +820,14 @@ def main():
     db_path = Config.get_optuna_db_path(model_name)
     storage = f"sqlite:///{db_path}"
 
-    study_name = f"{model_short_name}_exp{args.experiment_id}_study"
+    study_name = f"{model_short_name}_exp{Config.EXPERIMENT_ID}_study"
 
     study = optuna.create_study(study_name=study_name, storage=storage, load_if_exists=True, direction="maximize")
 
     # 3. Doğru Objective'i Seç
-    if args.experiment_id in [1, 4]:
+    if Config.EXPERIMENT_ID in [1, 4]:
         objective_func = partial(objective_flat, model_name=model_name)
-    elif args.experiment_id in [2, 3]:
+    elif Config.EXPERIMENT_ID in [2, 3]:
         objective_func = partial(objective_hierarchical, model_name=model_name)
     else:
         print("Geçersiz Experiment ID")
