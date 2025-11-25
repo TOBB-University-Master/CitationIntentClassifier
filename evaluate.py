@@ -41,7 +41,14 @@ def get_flat_predictions(model, data_loader, device):
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["label"]
 
-            logits = model(input_ids, attention_mask)
+            model_args = {"input_ids": input_ids, "attention_mask": attention_mask}
+
+            # Eğer batch içinde token_type_ids varsa (BERT vb. için) modele ekle
+            token_type_ids = batch.get("token_type_ids")
+            if token_type_ids is not None:
+                model_args["token_type_ids"] = token_type_ids.to(device)
+
+            logits = model(**model_args)
             preds = torch.argmax(logits, dim=1)
 
             all_preds.extend(preds.cpu().numpy())
@@ -71,8 +78,15 @@ def get_hierarchical_predictions(binary_model, multiclass_model, data_loader, de
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["label"]
 
+            model_args = {"input_ids": input_ids, "attention_mask": attention_mask}
+            token_type_ids = batch.get("token_type_ids")
+
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids.to(device)
+                model_args["token_type_ids"] = token_type_ids
+
             # 1. Binary Model
-            bin_logits = binary_model(input_ids, attention_mask)
+            bin_logits = binary_model(**model_args)
             bin_preds = torch.argmax(bin_logits, dim=1)
 
             final_preds = torch.full_like(bin_preds, fill_value=-1)
@@ -84,7 +98,17 @@ def get_hierarchical_predictions(binary_model, multiclass_model, data_loader, de
                 exp_input = input_ids[expert_indices]
                 exp_mask = attention_mask[expert_indices]
 
-                multi_logits = multiclass_model(exp_input, exp_mask)
+                # Uzman model argümanlarını hazırla
+                expert_args = {
+                    "input_ids": exp_input,
+                    "attention_mask": exp_mask
+                }
+
+                # Eğer ana modelde token_type_ids varsa, uzman için de filtrele
+                if "token_type_ids" in model_args:
+                    expert_args["token_type_ids"] = model_args["token_type_ids"][expert_indices]
+
+                multi_logits = multiclass_model(**expert_args)
                 multi_preds_raw = torch.argmax(multi_logits, dim=1)
 
                 # Uzman çıktısını (0-3) Global ID'ye (0-4) çevir
@@ -225,9 +249,21 @@ def main():
                 tokenizer = AutoTokenizer.from_pretrained(best_trial_path)
 
                 # --- EXPERIMENT 1 (FLAT) ---
-                if Config.EXPERIMENT_ID == 1:
+                if Config.EXPERIMENT_ID in [1, 4]:
                     model_path = os.path.join(best_trial_path, "best_model.pt")
                     enc_path = os.path.join(best_trial_path, "label_encoder.pkl")
+
+                    # Eski/Yeni isimlendirme uyumluluğu
+                    def find_file(d, choices):
+                        for n in choices:
+                            p = os.path.join(d, n)
+                            if os.path.exists(p): return p
+                        return None
+
+                    enc_path = find_file(best_trial_path, ["label_encoder.pkl", "label_encoder_flat.pkl"])
+                    if not enc_path:
+                        log_and_print(f"HATA: Encoder bulunamadı ({model_short})", log_file)
+                        continue
 
                     with open(enc_path, "rb") as f:
                         label_encoder = pickle.load(f)
@@ -239,9 +275,15 @@ def main():
                     model.to(device)
 
                     # Dataset
-                    test_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
-                                                   data_frame=test_df, task=None, include_section_in_input=False)
-                    test_loader = DataLoader(test_dataset, batch_size=Config.BATCH_SIZE, shuffle=False)
+                    test_dataset = CitationDataset(tokenizer,
+                                                   max_len=Config.MAX_LEN,
+                                                   mode="labeled",
+                                                   data_frame=test_df,
+                                                   task=None,
+                                                   include_section_in_input=Config.CONTEXT_RICH)
+                    test_loader = DataLoader(test_dataset,
+                                             batch_size=Config.BATCH_SIZE,
+                                             shuffle=False)
 
                     preds, true_labels = get_flat_predictions(model, test_loader, device)
 
@@ -300,9 +342,8 @@ def main():
                     multi_model.to(device)
 
                     # Dataset (Exp 3 için context True)
-                    use_context = (Config.EXPERIMENT_ID == 3)
                     test_dataset = CitationDataset(tokenizer, max_len=Config.MAX_LEN, mode="labeled",
-                                                   data_frame=test_df, task="all", include_section_in_input=use_context)
+                                                   data_frame=test_df, task="all", include_section_in_input=Config.CONTEXT_RICH)
                     test_loader = DataLoader(test_dataset, batch_size=Config.BATCH_SIZE, shuffle=False)
                     label_names = test_dataset.label_encoder.classes_
 
