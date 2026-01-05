@@ -30,6 +30,30 @@ def log_and_print(message, file_handle):
         file_handle.write(message + "\n")
 
 
+def plot_class_metrics_heatmap(report_dict, model_name, save_path):
+    """
+    Sınıflandırma raporunu (dict) alıp Precision, Recall, F1-Score değerlerini
+    ısı haritası (heatmap) olarak çizer ve kaydeder.
+    """
+    # Raporu DataFrame'e çevir
+    df = pd.DataFrame(report_dict).transpose()
+
+    # 'accuracy', 'macro avg', 'weighted avg' satırlarını görselden çıkar (Sadece sınıflar kalsın)
+    # Veya isterseniz ortalamaları da tutabilirsiniz. Genelde sınıfları görmek isteriz.
+    filter_indices = [idx for idx in df.index if idx not in ['accuracy', 'macro avg', 'weighted avg']]
+    df_classes = df.loc[filter_indices, ['precision', 'recall', 'f1-score']]
+
+    # Görselleştirme
+    plt.figure(figsize=(10, len(df_classes) * 0.8 + 2))  # Dinamik yükseklik
+    sns.heatmap(df_classes, annot=True, cmap='RdYlGn', fmt='.3f', vmin=0.0, vmax=1.0, linewidths=.5)
+
+    plt.title(f'Sınıf Bazlı Metrikler - {model_name}\n(Exp {Config.EXPERIMENT_ID})', fontsize=14)
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
 def get_flat_predictions(model, data_loader, device):
     """Experiment 1 (Flat) için tahmin fonksiyonu."""
     model.eval()
@@ -58,7 +82,8 @@ def get_flat_predictions(model, data_loader, device):
 
 
 def get_hierarchical_predictions(binary_model, multiclass_model, data_loader, device,
-                                 binary_encoder, multiclass_encoder, full_label_encoder):
+                                 binary_encoder, multiclass_encoder, full_label_encoder,
+                                 bg_threshold=Config.BACKGROUND_THRESHOLD):
     """Experiment 2 ve 3 (Hiyerarşik) için tahmin fonksiyonu."""
     binary_model.eval()
     multiclass_model.eval()
@@ -67,6 +92,12 @@ def get_hierarchical_predictions(binary_model, multiclass_model, data_loader, de
     # Kritik ID'leri al
     try:
         non_bg_id = binary_encoder.transform(['non-background'])[0]
+
+        # Binary Encoder'da 'background' ID'sini bulmak için (Genelde 2 sınıf vardır)
+        # Sınıflar: ['background', 'non-background'] gibi sıralı olabilir.
+        classes = list(binary_encoder.classes_)
+        bg_binary_idx = classes.index('background')  # 'background' kelimesinin indexi
+
         bg_orig_id = full_label_encoder.transform(['background'])[0]
     except Exception as e:
         print(f"Encoder hatası: {e}")
@@ -86,8 +117,29 @@ def get_hierarchical_predictions(binary_model, multiclass_model, data_loader, de
                 model_args["token_type_ids"] = token_type_ids
 
             # 1. Binary Model
+            # ---------------------------------------------------------
+            # 1. Binary Model ve Eşik (Threshold) Mantığı
+            # ---------------------------------------------------------
             bin_logits = binary_model(**model_args)
-            bin_preds = torch.argmax(bin_logits, dim=1)
+
+            # Logits -> Olasılık (Probability)
+            probs = torch.softmax(bin_logits, dim=1)
+
+            # Background sınıfının olasılığını al
+            bg_probs = probs[:, bg_binary_idx]
+
+            # --- EŞİK KONTROLÜ ---
+            # Eğer Background olasılığı > threshold ise Background (1) kabul et.
+            # Değilse (örneğin %60 background ama biz %85 istiyoruz), Non-Background say.
+            is_confident_bg = bg_probs > bg_threshold
+
+            # Başlangıçta herkesi Non-Background (Uzmana gidecek) olarak işaretle
+            bin_preds = torch.full((bin_logits.size(0),), non_bg_id, device=device)
+
+            # Sadece eşiği geçenleri Background yap
+            # (Burada bg_binary_idx tensöre çevrilip atanıyor)
+            bin_preds[is_confident_bg] = torch.tensor(bg_binary_idx, device=device)
+            # ---------------------------------------------------------
 
             final_preds = torch.full_like(bin_preds, fill_value=-1)
 
@@ -357,20 +409,54 @@ def main():
                 f1 = f1_score(true_labels, preds, average="macro", zero_division=0)
                 report = classification_report(true_labels, preds, target_names=label_names, zero_division=0)
 
+                acc = accuracy_score(true_labels, preds)
+                f1 = f1_score(true_labels, preds, average="macro", zero_division=0)
+
+                # Raporu DICT olarak da almamız lazım (Görselleştirme için)
+                report_dict = classification_report(true_labels, preds, target_names=label_names, zero_division=0,
+                                                    output_dict=True)
+                report_str = classification_report(true_labels, preds, target_names=label_names, zero_division=0)
+
+                log_and_print(f"Test Accuracy: {acc:.4f}", log_file)
+                log_and_print(f"Test Macro F1: {f1:.4f}", log_file)
+                log_and_print(report_str, log_file)
+
+                # --- [YENİ] Sınıf Bazlı Metrik Görselleştirme ---
+                heatmap_path = os.path.join(Config.RESULTS_DIR, f"class_metrics_{model_short}.png")
+                plot_class_metrics_heatmap(report_dict, model_short, heatmap_path)
+                log_and_print(f"Sınıf metrikleri grafiği kaydedildi: {heatmap_path}", log_file)
+
                 log_and_print(f"Test Accuracy: {acc:.4f}", log_file)
                 log_and_print(f"Test Macro F1: {f1:.4f}", log_file)
                 log_and_print(report, log_file)
 
-                # Confusion Matrix
+                # --- Confusion Matrix Çizimi ---
+                # 1. Ham Sayılar (Hücre içine yazmak için)
                 cm = confusion_matrix(true_labels, preds)
+
+                # 2. Normalize Değerler (Renklendirme için)
+                # normalize='true': Her satırın (Gerçek sınıfın) toplamı 1.0 olur (Recall bazlı)
+                cm_norm = confusion_matrix(true_labels, preds, normalize='true')
+
                 plt.figure(figsize=(10, 8))
-                sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=label_names, yticklabels=label_names)
-                plt.title(f'CM - {model_short} (Exp {Config.EXPERIMENT_ID})')
-                plt.ylabel('True');
-                plt.xlabel('Pred')
+
+                # data=cm_norm (Renkler orana göre belirlenir, küçük sınıflar sönük kalmaz)
+                # annot=cm (İçine gerçek sayılar yazılır)
+                # fmt='d' (Tam sayı formatı)
+                sns.heatmap(cm_norm, annot=cm, fmt='d', cmap='Blues',
+                            xticklabels=label_names, yticklabels=label_names)
+
+                plt.title(f'Confusion Matrix - {model_short}\n(Renkler: Normalize, Değerler: Adet)', fontsize=14)
+                plt.ylabel('Gerçek Etiket (Ground Truth)', fontsize=12)
+                plt.xlabel('Tahmin Edilen Etiket (Prediction)', fontsize=12)
+                plt.xticks(rotation=45, ha='right')
+                plt.yticks(rotation=0)
                 plt.tight_layout()
-                plt.savefig(os.path.join(Config.RESULTS_DIR, f"cm_{model_short}.png"))
+
+                save_path = os.path.join(Config.RESULTS_DIR, f"cm_{model_short}.png")
+                plt.savefig(save_path, dpi=300)
                 plt.close()
+                # --------------------------------
 
                 results.append({"Model": model_short, "Accuracy": acc, "Macro F1": f1})
 

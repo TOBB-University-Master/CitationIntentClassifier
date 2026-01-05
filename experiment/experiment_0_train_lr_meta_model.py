@@ -11,13 +11,13 @@ import warnings
 import functools
 
 # --- 0. Sabitler ve Dosya Yolları ---
-CHECKPOINT_DIR = "checkpoints_v0"
-COMET_PROJECT_NAME_PREFIX = "experiment-0-meta-models"
+CHECKPOINT_DIR = "../_train_meta_104"
+COMET_PROJECT_NAME_PREFIX = "experiment-0-meta-models-104"
 MODEL_SHORT_NAME = "lr"
 
 # Veri yolları
-TRAIN_PATH = os.path.join('data', 'data_v2_train_one_hot.csv')
-VAL_PATH = os.path.join('data', 'data_v2_val_one_hot.csv')
+TRAIN_PATH = os.path.join('../data', 'data_v2_train_one_hot_104.csv')
+VAL_PATH = os.path.join('../data', 'data_v2_val_one_hot_104.csv')
 BEST_MODEL_OUTPUT_DIR = os.path.join(CHECKPOINT_DIR, MODEL_SHORT_NAME)
 MODEL_PATH = os.path.join(BEST_MODEL_OUTPUT_DIR, 'best_lr_meta_model.joblib')
 ENCODER_PATH = os.path.join(BEST_MODEL_OUTPUT_DIR, 'best_lr_label_encoder.joblib')

@@ -1,94 +1,117 @@
 import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 from tqdm import tqdm
-import os
 import warnings
 
 # --- 1. Sabitler ---
 
-# Değerlendirilecek 'one_hot' test dosyası
-CSV_FILE_PATH = "data/data_v2_test_one_hot.csv"
+# Değerlendirilecek dosya yolu (Kendi dosya yolunuzla güncelleyin)
+CSV_FILE_PATH = "../data/data_v2_test_one_hot_104.csv"
 
-MODEL_PREFIXES = [
-    "gemini-flash-k0",
-    "gemini-flash-k1",
-    "gemini-flash-k2",
-    "gemini-flash-k5",
-    "chatgpt-4o-k0",
-    "chatgpt-4o-k1",
-    "chatgpt-4o-k2",
-    "chatgpt-4o-k5",
-    "dspy",
-    "gemini-pro-k0"
-]
-
-# Sütun sırasına göre etiketler (Kullanıcı tarafından belirtildiği gibi)
+# Sütun sonlarında arayacağımız etiketler
 LABELS = ['background', 'basis', 'support', 'differ', 'discuss']
+
+
+def discover_model_prefixes(columns, labels):
+    """
+    Sütun isimlerini tarar ve etiketlerden (labels) yola çıkarak
+    benzersiz model prefix'lerini bulur.
+
+    Örnek: 'bert-base_1_background' sütunu için prefix 'bert-base_1' olarak belirlenir.
+    """
+    prefixes = set()
+
+    for col in columns:
+        for label in labels:
+            # Sütun ismi _{label} ile bitiyorsa (örn: _background)
+            suffix = f"_{label}"
+            if col.endswith(suffix):
+                # Suffix'i çıkarıp geri kalanı prefix olarak alıyoruz
+                prefix = col.rsplit(suffix, 1)[0]
+                prefixes.add(prefix)
+
+    # Sıralı liste döndür (tutarlılık için)
+    return sorted(list(prefixes))
 
 
 def calculate_majority_vote_accuracy():
     """
-    'one_hot.csv' dosyasındaki tüm modellerin tahminlerini kullanarak
-    çoğunluk oylaması (majority voting) yapar ve başarı metriklerini hesaplar.
+    Dosyadaki modelleri dinamik olarak bulur, çoğunluk oylaması (majority voting) yapar
+    ve başarı metriklerini hesaplar.
     """
     try:
-        # --- 1. Ground Truth (Gerçek Değerler) ve Tahminleri Yükleme ---
+        # --- 1. Veri Yükleme ve Model Tespiti ---
         print(f"'{CSV_FILE_PATH}' dosyasından veri yükleniyor...")
         df = pd.read_csv(CSV_FILE_PATH)
         print(f"Test verisi yüklendi. Toplam {len(df)} kayıt.")
 
-        # Gerçek etiketleri (y_true) al
-        y_true = df['true_label']
+        # Sütun isimlerinden model prefixlerini otomatik çıkar
+        model_prefixes = discover_model_prefixes(df.columns, LABELS)
 
-        # Nihai tahminleri (çoğunluk oylaması sonucu) tutacak liste
+        if not model_prefixes:
+            print("HATA: Belirtilen etiketlere uygun hiçbir model sütunu bulunamadı.")
+            return
+
+        print(f"\nTespit edilen modeller ({len(model_prefixes)} adet):")
+        for mp in model_prefixes:
+            print(f" - {mp}")
+
+        # Gerçek etiketleri (y_true) al
+        # Not: CSV'de 'true_label' adında bir sütun olduğu varsayılıyor.
+        if 'true_label' not in df.columns:
+            raise KeyError("CSV dosyasında 'true_label' sütunu bulunamadı.")
+
+        y_true = df['true_label']
         y_pred = []
 
-        print(f"Toplam {len(MODEL_PREFIXES)} model üzerinden çoğunluk oylaması hesaplanıyor...")
+        print(f"\nÇoğunluk oylaması hesaplanıyor...")
 
         # --- 2. Her Satır İçin Çoğunluk Oylaması Hesaplama ---
-        # tqdm ile ilerleme çubuğu
-        for index, row in tqdm(df.iterrows(), total=len(df), desc="Oylama Hesaplanıyor"):
-
-            # Bu satır (citation) için modellerin oylarını tutan liste
+        for index, row in tqdm(df.iterrows(), total=len(df), desc="Oylama İlerleyişi"):
             votes = []
 
-            # Her bir modelin oyunu bul
-            for prefix in MODEL_PREFIXES:
+            # Dinamik olarak bulunan her model için tahminleri kontrol et
+            for prefix in model_prefixes:
                 model_voted = False
                 for label in LABELS:
+                    # Sütun ismini oluştur: prefix + "_" + label
                     col_name = f"{prefix}_{label}"
 
-                    # Modelin bu etiket için '1' verip vermediğini kontrol et
-                    if row[col_name] == 1:
+                    # Sütun var mı kontrolü (opsiyonel ama güvenli)
+                    if col_name in row and row[col_name] == 1:
                         votes.append(label)
                         model_voted = True
-                        break  # Bu modelin oyunu bulduk, sonraki modele geç
+                        break
 
-                if not model_voted:
-                    # Bu durum, modelin o satır için (örn: 'dspy') bir tahmin üretmediği
-                    # veya one-hot vektörde bir hata olduğu anlamına gelebilir.
-                    # Oylamaya katılmaması için 'None' ekleyebiliriz (opsiyonel)
-                    pass
+                        # Eğer modelin o satırda hiç 1'i yoksa (tahmin yapamamışsa) pas geçiyoruz.
 
-                    # Oyları topla ve en çok oyu alanı (mod) bul
+            # Oyları topla
             if not votes:
-                # Eğer hiçbir model oy vermemişse (imkansız gibi ama önlem)
-                y_pred.append(None)  # veya varsayılan bir etiket
+                y_pred.append(None)  # Hiçbir model oy kullanmadıysa
             else:
-                # pandas'ın mode() fonksiyonu en sık kullanılanı bulur.
-                # Eşitlik durumunda (örn: 5 'background', 5 'basis') ilkini alır ([0]).
+                # En çok tekrar eden etiketi (mode) al
                 majority_vote = pd.Series(votes).mode()[0]
                 y_pred.append(majority_vote)
 
-        # --- 3. Metrikleri Hesaplama ve Sonuçları Görüntüleme ---
-        print("\nOylama tamamlandı. Metrikler hesaplanıyor...")
+        # --- 3. Metrikleri Hesaplama ---
+        # None değerleri varsa temizleyelim (veya hata fırlatalım, burada filtreliyoruz)
+        valid_indices = [i for i, x in enumerate(y_pred) if x is not None]
 
-        accuracy = accuracy_score(y_true, y_pred)
-        macro_f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
-        report_str = classification_report(y_true, y_pred, labels=LABELS, zero_division=0)
+        if len(valid_indices) < len(y_pred):
+            print(
+                f"\nUYARI: {len(y_pred) - len(valid_indices)} satır için çoğunluk kararı verilemedi (tahmin yok). Bu satırlar atlanıyor.")
+            filtered_y_true = y_true.iloc[valid_indices]
+            filtered_y_pred = [y_pred[i] for i in valid_indices]
+        else:
+            filtered_y_true = y_true
+            filtered_y_pred = y_pred
+
+        accuracy = accuracy_score(filtered_y_true, filtered_y_pred)
+        macro_f1 = f1_score(filtered_y_true, filtered_y_pred, average='macro', zero_division=0)
+        report_str = classification_report(filtered_y_true, filtered_y_pred, labels=LABELS, zero_division=0)
 
         print("\n" + "=" * 50)
-        print("LLM Ensemble - Majority Voting Sonuçları")
+        print("Otomatik Algılanan Modeller ile Majority Voting Sonuçları")
         print("=" * 50)
         print(f"Model Doğruluğu (Accuracy): {accuracy:.4f}")
         print(f"Macro F1 Skoru:             {macro_f1:.4f}")
@@ -97,16 +120,11 @@ def calculate_majority_vote_accuracy():
         print("=" * 50)
 
     except FileNotFoundError:
-        print(f"HATA: '{CSV_FILE_PATH}' dosyası bulunamadı. Lütfen dosya yolunu kontrol edin.")
-    except KeyError as e:
-        print(f"\nHATA: CSV dosyasında beklenen bir sütun bulunamadı: {e}")
-        print("Lütfen 'MODEL_PREFIXES' veya 'LABELS' listesinin güncel olduğundan emin olun.")
+        print(f"HATA: '{CSV_FILE_PATH}' dosyası bulunamadı.")
     except Exception as e:
         print(f"Beklenmedik bir hata oluştu: {e}")
 
 
 if __name__ == "__main__":
-    # Pandas'ın .mode() ile ilgili olası bir Future uyarsını bastır
     warnings.simplefilter(action='ignore', category=FutureWarning)
-
     calculate_majority_vote_accuracy()

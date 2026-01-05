@@ -1,5 +1,11 @@
 import os
 
+"""
+    /train_105_500
+    /train_105_1000
+    /train_105_1500
+        500-1000-1500 veri seti sonuçlarını   
+"""
 
 class Config:
     # ==========================================================================
@@ -36,8 +42,10 @@ class Config:
     # ==========================================================================
     # 2. DENEY YAPILANDIRMASI (EXPERIMENT ID)
     # ==========================================================================
-    EXPERIMENT_ID = 3
+    EXPERIMENT_ID = 1
     MODEL_INDEX = 0
+    BACKGROUND_THRESHOLD = 0.5
+    TRAIN_SIZE = None  # None, 500, 1000, 1500
 
     ACTIVE_MODEL_NAME = None
     PREFIX_DIR = "_train_104/"
@@ -83,12 +91,18 @@ class Config:
             suffix = ""  # Exp 1 ve 2 normal veri
             cls.MAX_LEN = 128
 
-        cls.DATA_PATH_TRAIN = os.path.join(cls.DATA_DIR, f"data_v2_train{suffix}.csv")
+        if cls.TRAIN_SIZE:
+            cls.DATA_PATH_TRAIN = os.path.join(cls.DATA_DIR, f"data_v2_train_{cls.TRAIN_SIZE}.csv")
+        else:
+            cls.DATA_PATH_TRAIN = os.path.join(cls.DATA_DIR, f"data_v2_train{suffix}.csv")
+
         cls.DATA_PATH_VAL = os.path.join(cls.DATA_DIR, f"data_v2_val{suffix}.csv")
         cls.DATA_PATH_TEST = os.path.join(cls.DATA_DIR, f"data_v2_test{suffix}.csv")
 
         # 4) Comet Prefix (Model isminden bağımsız kısım)
         cls.COMET_PROJECT_PREFIX = f"experiment-{exp_id}"
+        if cls.TRAIN_SIZE:
+            cls.COMET_PROJECT_PREFIX += f"-size{cls.TRAIN_SIZE}"
 
         cls.ensure_directories()
 
@@ -109,6 +123,17 @@ class Config:
             experiment_id = cls.EXPERIMENT_ID
 
         cls.EXPERIMENT_ID = int(experiment_id)
+        cls._setup_paths()
+        if cls.ACTIVE_MODEL_NAME:
+            cls._update_comet_name()
+
+    @classmethod
+    def set_train_size(cls, size):
+        """Eğitim veri seti boyutunu ayarlar (500, 1000, 1500 vb). None ise tam set."""
+        if size is not None:
+            cls.TRAIN_SIZE = int(size)
+        else:
+            cls.TRAIN_SIZE = None
         cls._setup_paths()
         if cls.ACTIVE_MODEL_NAME:
             cls._update_comet_name()
@@ -166,6 +191,7 @@ class Config:
         print("=" * 60)
         print(f" Experiment ID     : {cls.EXPERIMENT_ID}")
         print(f" Model Index       : {cls.MODEL_INDEX}")
+        print(f" Train Size        : {cls.TRAIN_SIZE if cls.TRAIN_SIZE else 'FULL'}")
         print(f" Aktif Model       : {cls.ACTIVE_MODEL_NAME if cls.ACTIVE_MODEL_NAME else 'SEÇİLMEDİ'}")
         print(f" Comet Project     : {cls.COMET_PROJECT_NAME if cls.COMET_PROJECT_NAME else '---'}")
         print("-" * 60)

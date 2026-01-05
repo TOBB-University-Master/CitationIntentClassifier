@@ -1,6 +1,7 @@
 import pandas as pd
 from sqlalchemy import create_engine
-from tqdm import tqdm  # İsteğe bağlı, veritabanından çekme işlemini izlemek için
+from tqdm import tqdm
+from sklearn.metrics import f1_score
 
 
 """
@@ -17,7 +18,7 @@ from tqdm import tqdm  # İsteğe bağlı, veritabanından çekme işlemini izle
 
 # Sabitler
 DB_URL = "mysql+pymysql://root:root@localhost:3306/ULAKBIM-CABIM-UBYT-bs"
-CSV_FILE_PATH = "data/data_v2_test.csv"
+CSV_FILE_PATH = "../data/data_v2_test.csv"
 
 USER_MAPPING = {
     "gemini-2.5-flash-k0": "48ed0fcf-4e78-4913-b96b-d942646d34h1",
@@ -33,10 +34,10 @@ USER_MAPPING = {
 }
 
 
-def calculate_citation_intent_accuracy():
+def calculate_citation_intent_metrics():
     """
     CSV dosyasındaki gerçek değerlerle veritabanındaki kullanıcı tahminlerini
-    karşılaştırarak accuracy (doğruluk) değerlerini hesaplar.
+    karşılaştırarak Accuracy ve Macro-F1 değerlerini hesaplar.
     """
     try:
         # 1. Ground Truth (Gerçek Değerler) Verisini Yükleme
@@ -52,11 +53,11 @@ def calculate_citation_intent_accuracy():
         engine = create_engine(DB_URL)
         print("Veritabanı bağlantısı kuruldu.")
 
-        # 3. Her Bir Kullanıcı/Model İçin Tahminleri Çekme ve Accuracy Hesaplama
-        accuracy_results = {}
+        # 3. Her Bir Kullanıcı/Model İçin Tahminleri Çekme ve Metrikleri Hesaplama
+        results = {}
 
         # tqdm ile döngüyü sararak ilerlemeyi gösteriyoruz.
-        for model_name, user_id in tqdm(USER_MAPPING.items(), desc="Accuracy hesaplanıyor"):
+        for model_name, user_id in tqdm(USER_MAPPING.items(), desc="Metrikler hesaplanıyor"):
             # Veritabanı sorgusu
             query = f"""
             SELECT citation_id, citation_intent
@@ -73,7 +74,12 @@ def calculate_citation_intent_accuracy():
 
             if df_predictions.empty:
                 print(f"\nUyarı: '{model_name}' ({user_id}) için tahmin bulunamadı.")
-                accuracy_results[model_name] = {'Accuracy': 0.0, 'Total Predictions': 0, 'Matched Citations': 0}
+                results[model_name] = {
+                    'Accuracy': 0.0,
+                    'Macro-F1': 0.0,
+                    'Total Matches': 0,
+                    'Correct Predictions': 0
+                }
                 continue
 
             # Sütunları yeniden adlandırma ve tür dönüştürme
@@ -94,30 +100,45 @@ def calculate_citation_intent_accuracy():
             )
 
             if df_merged.empty:
-                accuracy_results[model_name] = {'Accuracy': 0.0, 'Total Predictions': len(df_predictions),
-                                                'Matched Citations': 0}
+                results[model_name] = {
+                    'Accuracy': 0.0,
+                    'Macro-F1': 0.0,
+                    'Total Matches': 0,
+                    'Correct Predictions': 0
+                }
                 continue
 
-            # Accuracy Hesaplama: GT ve Tahmin aynı mı?
+            # --- Accuracy Hesaplama ---
             correct_predictions = (df_merged['intent_gt'] == df_merged['intent_pred']).sum()
             total_matches = len(df_merged)
             accuracy = correct_predictions / total_matches if total_matches > 0 else 0.0
 
-            accuracy_results[model_name] = {
+            # --- Macro-F1 Hesaplama (EKLENDI) ---
+            # zero_division=0 parametresini uyarı almamak için ekliyoruz.
+            macro_f1 = f1_score(
+                df_merged['intent_gt'],
+                df_merged['intent_pred'],
+                average='macro',
+                zero_division=0
+            )
+
+            results[model_name] = {
                 'Accuracy': accuracy,
+                'Macro-F1': macro_f1,  # Yeni metrik
                 'Total Matches': total_matches,
                 'Correct Predictions': correct_predictions
             }
 
         # 4. Sonuçları Görüntüleme
-        df_results = pd.DataFrame.from_dict(accuracy_results, orient='index')
+        df_results = pd.DataFrame.from_dict(results, orient='index')
         df_results.index.name = 'Model Name'
 
-        print("\n" + "=" * 50)
-        print("Accuracy Sonuçları")
-        print("=" * 50)
-        print(df_results.sort_values(by='Accuracy', ascending=False).to_markdown())
-        print("=" * 50)
+        print("\n" + "=" * 65)
+        print("Model Performans Sonuçları (Accuracy & Macro-F1)")
+        print("=" * 65)
+        # Tabloyu Macro-F1'e göre sıralayabiliriz (veya Accuracy'e göre)
+        print(df_results.sort_values(by='Macro-F1', ascending=False).to_markdown())
+        print("=" * 65)
         print(f"Not: 'Total Matches' sütunu, hem CSV'de hem de veritabanında karşılığı bulunan atıf sayısını gösterir.")
 
     except FileNotFoundError:
@@ -125,6 +146,5 @@ def calculate_citation_intent_accuracy():
     except Exception as e:
         print(f"Beklenmedik bir hata oluştu: {e}")
 
-
 if __name__ == "__main__":
-    calculate_citation_intent_accuracy()
+    calculate_citation_intent_metrics()

@@ -243,7 +243,8 @@ def objective_flat(trial, model_name):
             "loss_function": Config.LOSS_FUNCTION,
             "patience": Config.PATIENCE,
             "evaluation_metric": Config.EVALUATION_METRIC,
-            "context_rich": Config.CONTEXT_RICH
+            "context_rich": Config.CONTEXT_RICH,
+            "train_size": Config.TRAIN_SIZE
         }
 
         # Cihaz
@@ -741,7 +742,8 @@ def objective_hierarchical(trial, model_name):
             "loss_function": Config.LOSS_FUNCTION,
             "experiment_id": Config.EXPERIMENT_ID,
             "model_id": Config.MODEL_INDEX,
-            "context_rich": Config.CONTEXT_RICH
+            "context_rich": Config.CONTEXT_RICH,
+            "train_size": Config.TRAIN_SIZE
         })
 
         # Veri Yükleme
@@ -800,6 +802,7 @@ def main():
     parser.add_argument("--experiment_id", type=int, default=None, help="1: Flat, 2: Hierarchical, 3: Context-Aware")
     parser.add_argument("--model_index", type=int, default=None, help="Index of the model in Config.MODELS")
     parser.add_argument("--prefix_dir", type=str, default=None, help="Çıktıların kaydedileceği üst klasör (örn: _train_run_1/)")
+    parser.add_argument("--train_size", type=int, default=None, help="Eğitim veri seti boyutu (500, 1000, 1500 vb.)")
     args = parser.parse_args()
 
     # 1. Config Ayarla
@@ -807,6 +810,7 @@ def main():
         Config.set_prefix(args.prefix_dir)
         Config.set_experiment(args.experiment_id)
         Config.set_model(args.model_index)
+        Config.set_train_size(args.train_size)
         Config.print_config()
     except ValueError as e:
         print(f"Hata: {e}")

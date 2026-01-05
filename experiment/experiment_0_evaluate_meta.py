@@ -16,8 +16,8 @@ import numpy as np
 """
 
 # --- 1. Konfigürasyon ve Argümanlar ---
-CHECKPOINT_DIR = "checkpoints_v0"
-TEST_DATA_PATH = "data/data_v2_test_one_hot.csv"
+CHECKPOINT_DIR = "../_train_meta_001"
+TEST_DATA_PATH = "../data/data_v2_test_one_hot.csv"
 
 # Model seçimi için Argparse
 parser = argparse.ArgumentParser(description="Meta-Model Değerlendirme Betiği")
@@ -25,7 +25,7 @@ parser.add_argument(
     '--model_name',
     type=str,
     choices=['lr', 'xgb'],
-    default='xgb',
+    default='lr',
     help="Değerlendirilecek model: 'lr' (Logistic Regression) veya 'xgb' (XGBoost)"
 )
 args = parser.parse_args()
