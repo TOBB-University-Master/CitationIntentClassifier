@@ -20,7 +20,7 @@ class Config:
     ]
 
     COMET_API_KEY = "LrkBSXNSdBGwikgVrzE2m73iw"
-    COMET_WORKSPACE = "ulakbim-cic-colab-v101-focal-gamma"
+    COMET_WORKSPACE = "ulakbim-cic-colab-v101-learning-curve"
     COMET_ONLINE_MODE = True
 
     # Eğitim Parametreleri
