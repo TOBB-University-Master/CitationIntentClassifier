@@ -299,7 +299,7 @@ def objective_flat(trial, model_name):
         val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=Config.NUMBER_CPU)
 
         # --- 4. Model & Loss ---
-        model = TransformerClassifier(model_name, num_labels=num_labels)
+        model = TransformerClassifier(model_name, num_labels=num_labels, freeze_backbone=Config.should_freeze_backbone())
         model.transformer.resize_token_embeddings(len(tokenizer))
         model.to(device)
 
@@ -421,7 +421,7 @@ def run_hierarchical_stage(task_type, config, trial, train_df, val_df, experimen
 
         # Model ve Loss
         num_labels = len(train_dataset.get_label_names())
-        model = TransformerClassifier(config["model_name"], num_labels=num_labels)
+        model = TransformerClassifier(config["model_name"], num_labels=num_labels, freeze_backbone=Config.should_freeze_backbone())
         model.transformer.resize_token_embeddings(len(tokenizer))
         model.to(device)
 
@@ -487,7 +487,7 @@ def evaluate_flat_test(config, experiment, test_df, device, model_path, encoder_
     label_names = label_encoder.classes_
 
     # Modeli Yükle
-    model = TransformerClassifier(config["model_name"], num_labels=len(label_names))
+    model = TransformerClassifier(config["model_name"], num_labels=len(label_names), freeze_backbone=Config.should_freeze_backbone())
     model.transformer.resize_token_embeddings(len(tokenizer))
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
@@ -586,13 +586,13 @@ def evaluate_hierarchical_test(config, experiment, test_df, device, binary_model
         multi_enc = pickle.load(f)
 
     # Modelleri Yükle
-    bin_model = TransformerClassifier(config["model_name"], num_labels=len(bin_enc.classes_))
+    bin_model = TransformerClassifier(config["model_name"], num_labels=len(bin_enc.classes_), freeze_backbone=Config.should_freeze_backbone())
     bin_model.transformer.resize_token_embeddings(len(tokenizer))
     bin_model.load_state_dict(torch.load(binary_model_path, map_location=device))
     bin_model.to(device);
     bin_model.eval()
 
-    multi_model = TransformerClassifier(config["model_name"], num_labels=len(multi_enc.classes_))
+    multi_model = TransformerClassifier(config["model_name"], num_labels=len(multi_enc.classes_), freeze_backbone=Config.should_freeze_backbone())
     multi_model.transformer.resize_token_embeddings(len(tokenizer))
     multi_model.load_state_dict(torch.load(multiclass_model_path, map_location=device))
     multi_model.to(device);

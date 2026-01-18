@@ -12,10 +12,19 @@ class TransformerClassifier(nn.Module):
             num_labels (int): Tahmin edilecek hedef etiket (citation_intent) sayısı.
             dropout_rate (float): Dropout katmanı için oran.
     """
-    def __init__(self, model_name, num_labels, dropout_rate=0.1):
+    def __init__(self, model_name, num_labels, dropout_rate=0.1, freeze_backbone=False):
         super(TransformerClassifier, self).__init__()
         # AutoModel sayesinde model_name'e göre doğru mimari (BERT, RoBERTa vb.) otomatik olarak yüklenir.
         self.transformer = AutoModel.from_pretrained(model_name)
+
+        # Eğer freeze_backbone True ise, transformer ağırlıklarını dondur
+        # config.py içinde sadece scibert durumu için true olarak set edilir
+        # scibert durumunda modelin ağırlıkları fine tune edilmeyecek sadece sınıflandırıcı egitilecek
+        if freeze_backbone:
+            for param in self.transformer.parameters():
+                param.requires_grad = False
+            print(f"Bilgi: {model_name} backbone katmanları donduruldu (Frozen). Sadece sınıflandırıcı eğitilecek.")
+
         self.dropout = nn.Dropout(dropout_rate)
 
         # Farklı modellerin hidden_size'ı farklı olabilir. Bunu config'den okuyoruz.

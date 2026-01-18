@@ -1,10 +1,25 @@
 import os
 
 """
-    /train_105_500
-    /train_105_1000
-    /train_105_1500
-        500-1000-1500 veri seti sonuçlarını   
+
+    Yapılan deneyler
+        main 
+            /train_104
+        learning curve
+            /train_104_500
+            /train_104_1000
+            /train_104_1500
+        scibert tr
+            /train_105
+        scibert eng
+            /train_106
+        
+        
+        
+    comet 
+        ulakbim-cic-colab-v101-learning-curve       -> learning curve 
+        ulakbim-cic-colab-v101-scibert-base-eng     -> scibert eng traning (freeze backbone)
+        ulakbim-cic-colab-v101-scibert-base         -> scibert tr traning (freeze backbone)
 """
 
 class Config:
@@ -16,11 +31,12 @@ class Config:
         "dbmdz/electra-base-turkish-cased-discriminator",
         "xlm-roberta-base",
         "microsoft/deberta-v3-base",
-        "answerdotai/ModernBERT-base"
+        "answerdotai/ModernBERT-base",
+        "allenai/scibert_scivocab_uncased"      # SciBERT eklendi
     ]
 
     COMET_API_KEY = "LrkBSXNSdBGwikgVrzE2m73iw"
-    COMET_WORKSPACE = "ulakbim-cic-colab-v101-learning-curve"
+    COMET_WORKSPACE = "kemalsami"
     COMET_ONLINE_MODE = True
 
     # Eğitim Parametreleri
@@ -63,6 +79,17 @@ class Config:
     COMET_PROJECT_NAME = ""     # örn: experiment-1-bert-base
 
     @classmethod
+    def should_freeze_backbone(cls):
+        """
+        Aktif model SciBERT ise True, değilse False döndürür.
+        İleride başka modelleri dondurmak istersen buraya ekleyebilirsin.
+        """
+        if cls.ACTIVE_MODEL_NAME and "scibert" in cls.ACTIVE_MODEL_NAME.lower():
+            return True
+        return False
+
+
+    @classmethod
     def _setup_paths(cls):
         """EXPERIMENT_ID değerine göre klasör ve veri yollarını ayarlar."""
         exp_id = int(cls.EXPERIMENT_ID)
@@ -77,13 +104,14 @@ class Config:
             1: "experiment_1_flat",
             2: "experiment_2_hierarchical",
             3: "experiment_3_hierarchical_rich",
-            4: "experiment_4_flat_rich"
+            4: "experiment_4_flat_rich",
+            5: "experiment_5_flat_ext_no_section"
         }
         folder_name = result_folders.get(exp_id, f"experiment_{exp_id}_custom")
         cls.RESULTS_DIR = os.path.join(f"{cls.PREFIX_DIR}outputs", folder_name)
 
         # 3) Veri Yolları
-        if exp_id in [3, 4]:
+        if exp_id in [3, 4, 5]:
             suffix = "_ext"
             cls.MAX_LEN = 256  # Context olduğu için daha uzun
             cls.CONTEXT_RICH = True
