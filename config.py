@@ -114,10 +114,15 @@ class Config:
         if exp_id in [3, 4, 5]:
             suffix = "_ext"
             cls.MAX_LEN = 256  # Context olduğu için daha uzun
-            cls.CONTEXT_RICH = True
         else:
             suffix = ""  # Exp 1 ve 2 normal veri
             cls.MAX_LEN = 128
+
+        # Sadece experiment 3 ve 4 için section bilgisi alınabilir
+        if exp_id in [3, 4]:
+            cls.CONTEXT_RICH = True
+        else:
+            cls.CONTEXT_RICH = False
 
         if cls.TRAIN_SIZE:
             cls.DATA_PATH_TRAIN = os.path.join(cls.DATA_DIR, f"data_v2_train_{cls.TRAIN_SIZE}.csv")

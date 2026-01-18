@@ -829,7 +829,7 @@ def main():
     study = optuna.create_study(study_name=study_name, storage=storage, load_if_exists=True, direction="maximize")
 
     # 3. Doğru Objective'i Seç
-    if Config.EXPERIMENT_ID in [1, 4]:
+    if Config.EXPERIMENT_ID in [1, 4, 5]:
         objective_func = partial(objective_flat, model_name=model_name)
     elif Config.EXPERIMENT_ID in [2, 3]:
         objective_func = partial(objective_hierarchical, model_name=model_name)
